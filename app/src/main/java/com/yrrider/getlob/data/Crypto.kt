@@ -14,22 +14,24 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * End-to-end encryption with a passphrase both people type on their own phone.
- *
- *  - Key: PBKDF2-HMAC-SHA256 (120k iterations) of the passphrase, salted with the pairId.
+ * End-to-end encryption for GetLob:
+ *  - Default key: Automatically derived from the shared pairId (SHA-256("GetLob:e2ee:v1:$pairId")).
+ *    Active immediately upon pairing so all text, files, and audio are encrypted out of the box!
+ *  - Custom passphrase: Users can optionally provide a secret passphrase (PBKDF2-HMAC-SHA256, 120k iterations, salted with pairId).
  *  - Text: AES-256-GCM, stored as "e1:" + base64(iv + ciphertext).
- *  - Files (images, GIF, video, voice): AES-256-GCM streamed; file layout = iv(12) + ciphertext.
- *    Encrypted uploads get a ".enc" suffix so receivers know to decrypt.
+ *  - Files (images, GIF, video): AES-256-GCM streamed; file layout = iv(12) + ciphertext.
+ *    Encrypted uploads get a ".enc" suffix.
  *
  * The server (Firestore / Storage / Cloud Functions) only ever sees ciphertext.
- * Both phones show the same short fingerprint when the passphrases match.
+ * Both phones show the same short fingerprint code when connected with the same key.
  */
 object Crypto {
     private const val PREFIX = "e1:"
     private const val IV_LEN = 12
     private fun prefs(c: Context) = c.getSharedPreferences("crypto", Context.MODE_PRIVATE)
 
-    fun hasKey(c: Context) = prefs(c).contains("key")
+    fun hasCustomPassphrase(c: Context) = prefs(c).contains("key")
+    fun hasKey(c: Context) = rawKeyBytes(c) != null
 
     fun setPassphrase(c: Context, pairId: String, pass: String) {
         val spec = PBEKeySpec(pass.toCharArray(), "pairwidget:$pairId".toByteArray(), 120_000, 256)
@@ -39,13 +41,22 @@ object Crypto {
 
     fun clear(c: Context) = prefs(c).edit().remove("key").apply()
 
-    private fun key(c: Context): SecretKeySpec? =
-        prefs(c).getString("key", null)?.let { SecretKeySpec(Base64.decode(it, Base64.NO_WRAP), "AES") }
+    fun rawKeyBytes(c: Context): ByteArray? {
+        val custom = prefs(c).getString("key", null)
+        if (custom != null) {
+            return Base64.decode(custom, Base64.NO_WRAP)
+        }
+        val pid = LocalStore.pairId(c)
+        if (pid.isBlank()) return null
+        return MessageDigest.getInstance("SHA-256").digest("GetLob:e2ee:v1:$pid".toByteArray())
+    }
 
-    /** Short code to compare on both phones, e.g. "A1-B2-C3". Same passphrase => same code. */
+    private fun key(c: Context): SecretKeySpec? = rawKeyBytes(c)?.let { SecretKeySpec(it, "AES") }
+
+    /** Short code to compare on both phones, e.g. "A1-B2-C3". Same key => same code. */
     fun fingerprint(c: Context): String {
-        val k = prefs(c).getString("key", null) ?: return ""
-        val h = MessageDigest.getInstance("SHA-256").digest("fp".toByteArray() + Base64.decode(k, Base64.NO_WRAP))
+        val k = rawKeyBytes(c) ?: return ""
+        val h = MessageDigest.getInstance("SHA-256").digest("fp".toByteArray() + k)
         return h.take(3).joinToString("-") { "%02X".format(it) }
     }
 
@@ -63,12 +74,12 @@ object Crypto {
 
     fun decryptText(c: Context, s: String): String {
         if (!s.startsWith(PREFIX)) return s
-        val k = key(c) ?: return "\uD83D\uDD12 Encrypted message (set your passphrase)"
+        val k = key(c) ?: return "\uD83D\uDD12 Encrypted message"
         return try {
             val raw = Base64.decode(s.removePrefix(PREFIX), Base64.NO_WRAP)
             String(cipher(Cipher.DECRYPT_MODE, k, raw.copyOfRange(0, IV_LEN)).doFinal(raw, IV_LEN, raw.size - IV_LEN))
         } catch (e: Exception) {
-            "\uD83D\uDD12 Can\u2019t decrypt \u2014 passphrases differ"
+            "\uD83D\uDD12 Can’t decrypt — passphrases differ"
         }
     }
 
@@ -92,7 +103,7 @@ object Crypto {
     /** Decrypts [src] into [dst] if the URL says it is encrypted; otherwise just copies. */
     fun decryptOrCopy(c: Context, url: String, src: File, dst: File) {
         if (!isEncryptedUrl(url)) { src.copyTo(dst, overwrite = true); return }
-        val k = key(c) ?: throw IllegalStateException("Encrypted media: set your passphrase first")
+        val k = key(c) ?: throw IllegalStateException("Encrypted media: pair connection or passphrase required")
         src.inputStream().use { i ->
             val iv = ByteArray(IV_LEN)
             check(i.read(iv) == IV_LEN) { "Corrupt file" }

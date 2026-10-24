@@ -158,11 +158,75 @@ object LocalStore {
         prefs(c).edit().putLong("lastClearedAt", timestamp).apply()
     }
 
+val DEFAULT_MOODS = listOf(
+        "❤️" to "Love",
+        "😊" to "Happy",
+        "🥺" to "Miss You",
+        "😴" to "Sleepy",
+        "🔥" to "Excited",
+        "☕" to "Coffee",
+        "🍕" to "Food",
+        "💼" to "Working"
+    )
+
+    fun getMoods(c: Context): List<Pair<String, String>> {
+        val raw = prefs(c).getString("custom_moods_json", null) ?: return DEFAULT_MOODS
+        return try {
+            val arr = org.json.JSONArray(raw)
+            val list = mutableListOf<Pair<String, String>>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val e = obj.optString("e")
+                val l = obj.optString("l")
+                if (e.isNotBlank()) {
+                    list.add(e to l)
+                }
+            }
+            if (list.isEmpty()) DEFAULT_MOODS else list
+        } catch (_: Exception) {
+            DEFAULT_MOODS
+        }
+    }
+
+    fun saveMoods(c: Context, moods: List<Pair<String, String>>) {
+        val arr = org.json.JSONArray()
+        for ((e, l) in moods) {
+            val obj = org.json.JSONObject()
+            obj.put("e", e)
+            obj.put("l", l)
+            arr.put(obj)
+        }
+        prefs(c).edit().putString("custom_moods_json", arr.toString()).apply()
+    }
+
+    fun addCustomMood(c: Context, emoji: String, label: String) {
+        val current = getMoods(c).toMutableList()
+        val idx = current.indexOfFirst { it.first == emoji.trim() }
+        if (idx >= 0) {
+            current[idx] = emoji.trim() to label.trim()
+        } else {
+            current.add(emoji.trim() to label.trim())
+        }
+        saveMoods(c, current)
+    }
+
+    fun removeCustomMood(c: Context, emoji: String) {
+        val current = getMoods(c).filterNot { it.first == emoji.trim() }
+        saveMoods(c, current)
+    }
+
+    fun resetMoods(c: Context) {
+        prefs(c).edit().remove("custom_moods_json").apply()
+    }
+
+    fun pairId(c: Context): String = prefs(c).getString("pairId", "") ?: ""
+    fun pairCode(c: Context): String = prefs(c).getString("pairCode", "") ?: ""
+
     var Context.pairId: String
-        get() = prefs(this).getString("pairId", "") ?: ""
+        get() = pairId(this)
         set(v) { prefs(this).edit().putString("pairId", v).apply() }
 
     var Context.pairCode: String
-        get() = prefs(this).getString("pairCode", "") ?: ""
+        get() = pairCode(this)
         set(v) { prefs(this).edit().putString("pairCode", v).apply() }
 }

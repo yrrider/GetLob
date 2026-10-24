@@ -22,7 +22,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PairMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
-        CoroutineScope(Dispatchers.IO).launch { runCatching { Repo.saveToken(token) } }
+        CoroutineScope(Dispatchers.IO).launch { runCatching { Repo.saveToken(token, applicationContext) } }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {

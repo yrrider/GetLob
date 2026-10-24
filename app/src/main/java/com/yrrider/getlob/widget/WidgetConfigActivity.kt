@@ -166,7 +166,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    "Goodmorning beta",
+                    "Goodmorning",
                     color = Color(s.fontColor),
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium

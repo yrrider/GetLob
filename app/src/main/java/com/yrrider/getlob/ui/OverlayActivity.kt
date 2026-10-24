@@ -527,18 +527,21 @@ private fun OverlayRoot(
                                     color = Color(0xFF94A3B8),
                                     modifier = Modifier.padding(bottom = 6.dp)
                                 )
+                                val customMoods = remember { LocalStore.getMoods(ctx) }
                                 Row(
-                                    Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    EMOJIS.forEach { (emoji, label) ->
+                                    customMoods.forEach { (emoji, label) ->
                                         Box(
                                             Modifier
-                                                .size(34.dp)
+                                                .size(36.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(0x22FFFFFF))
                                                 .clickable {
-                                                    job { sendAndShow(Message(type = MsgType.EMOJI, text = "$emoji $label")) }
+                                                    job { sendAndShow(Message(type = MsgType.EMOJI, text = if (label.isNotBlank()) "$emoji $label" else emoji)) }
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {

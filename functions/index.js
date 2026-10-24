@@ -40,7 +40,8 @@ exports.createPair = onCall(async (req) => {
         const oldCode = oldPair.get("code");
         if (oldCode) tx.delete(db.collection("invites").doc(oldCode));
       }
-      tx.set(pairRef, { members: [uid], createdAt: Date.now(), code });
+      const fcmToken = user.exists ? user.get("fcmToken") : null;
+      tx.set(pairRef, { members: [uid], createdAt: Date.now(), code, tokens: fcmToken ? { [uid]: fcmToken } : {} });
       tx.set(inviteRef, { pairId: pairRef.id, createdAt: Date.now(), expiresAt });
       tx.set(userRef, { pairId: pairRef.id }, { merge: true });
       return { code, pairId: pairRef.id };
@@ -99,7 +100,10 @@ exports.joinPair = onCall(async (req) => {
       const oldCode = oldPair.get("code");
       if (oldCode) tx.delete(db.collection("invites").doc(oldCode));
     }
-    tx.update(pairRef, { members: admin.firestore.FieldValue.arrayUnion(uid) });
+    const fcmToken = user.exists ? user.get("fcmToken") : null;
+    const updatePair = { members: admin.firestore.FieldValue.arrayUnion(uid) };
+    if (fcmToken) updatePair[`tokens.${uid}`] = fcmToken;
+    tx.update(pairRef, updatePair);
     tx.set(userRef, { pairId, failedJoinAttempts: 0 }, { merge: true });
     tx.delete(inviteRef);
     return { pairId };
@@ -116,7 +120,7 @@ exports.leavePair = onCall(async (req) => {
     const pairId = user.exists ? user.get("pairId") : "";
     const pair = pairId ? await tx.get(db.collection("pairs").doc(pairId)) : null;
     if (pair && pair.exists) {
-      tx.update(pair.ref, { members: admin.firestore.FieldValue.arrayRemove(uid) });
+      tx.update(pair.ref, { members: admin.firestore.FieldValue.arrayRemove(uid), [`tokens.${uid}`]: admin.firestore.FieldValue.delete() });
       const code = pair.get("code");
       if (code) tx.delete(db.collection("invites").doc(code));
     }
@@ -153,11 +157,19 @@ exports.onMessageCreated = onDocumentCreated("pairs/{pairId}/messages/{msgId}", 
   if (!snap) return;
   const m = snap.data();
   const pair = await db.collection("pairs").doc(event.params.pairId).get();
-  const target = ((pair.data() || {}).members || []).find((u) => u !== m.from);
+  const pairData = pair.data() || {};
+  const target = (pairData.members || []).find((u) => u !== m.from);
   if (!target) return;
 
-  const user = await db.collection("users").doc(target).get();
-  const token = user.exists && user.data().fcmToken;
+  // Single-read fast path: read cached FCM token directly from the pair document
+  let token = pairData.tokens && pairData.tokens[target];
+  if (!token) {
+    const user = await db.collection("users").doc(target).get();
+    token = user.exists && user.data().fcmToken;
+    if (token) {
+      pair.ref.update({ [`tokens.${target}`]: token }).catch(() => {});
+    }
+  }
   if (!token) return;
 
   // Notice: 'from' is a reserved FCM key in data payload, renamed to senderUid
@@ -186,7 +198,10 @@ exports.onMessageCreated = onDocumentCreated("pairs/{pairId}/messages/{msgId}", 
     });
   } catch (e) {
     if (e.code === "messaging/registration-token-not-registered") {
-      await db.collection("users").doc(target).update({ fcmToken: admin.firestore.FieldValue.delete() });
+      await Promise.all([
+        db.collection("users").doc(target).update({ fcmToken: admin.firestore.FieldValue.delete() }),
+        pair.ref.update({ [`tokens.${target}`]: admin.firestore.FieldValue.delete() }),
+      ]).catch(() => {});
     } else {
       console.error(e);
     }

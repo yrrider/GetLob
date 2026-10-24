@@ -43,9 +43,19 @@ object Repo {
     suspend fun uid(): String =
         auth.currentUser?.uid ?: auth.signInAnonymously().await().user!!.uid
 
-    suspend fun saveToken(token: String) {
-        db.collection("users").document(uid())
+    suspend fun saveToken(token: String, ctx: Context? = null) {
+        val u = uid()
+        db.collection("users").document(u)
             .set(mapOf("fcmToken" to token), com.google.firebase.firestore.SetOptions.merge()).await()
+        ctx?.let {
+            val pid = with(LocalStore) { it.pairId }
+            if (pid.isNotBlank()) {
+                runCatching {
+                    db.collection("pairs").document(pid)
+                        .set(mapOf("tokens" to mapOf(u to token)), com.google.firebase.firestore.SetOptions.merge()).await()
+                }
+            }
+        }
     }
 
     // ---------- pairing ----------
@@ -82,7 +92,8 @@ object Repo {
     }
 
     suspend fun unpair(ctx: Context) {
-        fns.getHttpsCallable("leavePair").call().await()
+        runCatching { fns.getHttpsCallable("leavePair").call().await() }
+        Crypto.clear(ctx)
         with(LocalStore) {
             ctx.pairId = ""
             ctx.pairCode = ""

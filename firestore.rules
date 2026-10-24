@@ -19,9 +19,9 @@ service cloud.firestore {
 
     match /pairs/{pairId} {
       allow read: if request.auth != null && (resource == null || request.auth.uid in resource.data.members);
-      // Pair members may only save display settings and canvasClearedAt
+      // Pair members may only save display settings, canvasClearedAt, and FCM tokens
       allow update: if request.auth != null && request.auth.uid in resource.data.members &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['settings', 'canvasClearedAt']);
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['settings', 'canvasClearedAt', 'tokens']);
       allow create, delete: if false;
 
       match /messages/{id} {

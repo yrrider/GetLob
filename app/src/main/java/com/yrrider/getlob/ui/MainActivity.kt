@@ -120,11 +120,16 @@ private fun App() {
     var photoCaption by remember { mutableStateOf("") }
     var cameraTempFile by remember { mutableStateOf<File?>(null) }
 
+    // Moods & Reactions state
+    var moods by remember { mutableStateOf(LocalStore.getMoods(ctx)) }
+    var showCustomizeMoodsDialog by remember { mutableStateOf(false) }
+    var showUnpairDialog by remember { mutableStateOf(false) }
+
     // End-to-end encryption state
     var keyTick by remember { mutableIntStateOf(0) }
     var passphrase by remember { mutableStateOf("") }
-    val encrypted = remember(keyTick) { Crypto.hasKey(ctx) }
-    val fingerprint = remember(keyTick) { Crypto.fingerprint(ctx) }
+    val hasCustomPassphrase = remember(keyTick) { Crypto.hasCustomPassphrase(ctx) }
+    val fingerprint = remember(keyTick, pairId) { Crypto.fingerprint(ctx) }
     var headerLogo by remember {
         mutableStateOf(ctx.getSharedPreferences("profile", Context.MODE_PRIVATE).getString("headerLogo", "") ?: "")
     }
@@ -218,7 +223,7 @@ private fun App() {
             me = Repo.uid()
             runCatching {
                 val t = FirebaseMessaging.getInstance().token.await()
-                Repo.saveToken(t)
+                Repo.saveToken(t, ctx)
             }
             pairId = Repo.pairId(ctx)
             if (inviteCode.isEmpty()) {
@@ -718,19 +723,39 @@ private fun App() {
                             Spacer(Modifier.height(14.dp))
 
                             // Mood or Emoji selector
-                            Text("Share Mood / Reaction", style = MaterialTheme.typography.labelMedium, color = Color(0xFF94A3B8))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Share Mood / Reaction", style = MaterialTheme.typography.labelMedium, color = Color(0xFF94A3B8))
+                                TextButton(
+                                    onClick = { showCustomizeMoodsDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                ) {
+                                    Text("⚙️ Customize", fontSize = 11.sp, color = Color(0xFF38BDF8))
+                                }
+                            }
                             Spacer(Modifier.height(6.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(EMOJI_MOODS) { (emoji, label) ->
+                                item {
+                                    AssistChip(
+                                        onClick = { showCustomizeMoodsDialog = true },
+                                        label = { Text("+ Add", fontSize = 12.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0369A1))
+                                    )
+                                }
+                                items(moods) { (emoji, label) ->
                                     FilterChip(
                                         selected = selectedMood == emoji,
                                         onClick = {
                                             selectedMood = emoji
                                             executeSend("Mood") {
-                                                sendAndShow(Message(type = MsgType.EMOJI, text = "$emoji $label"))
+                                                sendAndShow(Message(type = MsgType.EMOJI, text = if (label.isNotBlank()) "$emoji $label" else emoji))
                                             }
                                         },
-                                        label = { Text("$emoji $label", fontSize = 12.sp) }
+                                        label = { Text(if (label.isNotBlank()) "$emoji $label" else emoji, fontSize = 12.sp) }
                                     )
                                 }
                             }
@@ -849,7 +874,7 @@ private fun App() {
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Goodmorning beta", color = Color(widgetSettings.fontColor), fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                                    Text("Goodmorning", color = Color(widgetSettings.fontColor), fontSize = 17.sp, fontWeight = FontWeight.Medium)
                                     Spacer(Modifier.height(2.dp))
                                     Text("❤️ Love • ${widgetSettings.fontStyle} Style", color = Color(widgetSettings.fontColor).copy(alpha = 0.8f), fontSize = 12.sp)
                                 }
@@ -1030,38 +1055,29 @@ private fun App() {
                                 )
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 Button(
                                     onClick = ::saveWidgetSettings,
                                     enabled = hasUnsavedWidgetChanges,
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color.Black)
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color.Black),
+                                    modifier = Modifier.weight(1f)
                                 ) { Text("Save Widget Changes", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                                 OutlinedButton(
                                     onClick = { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) },
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Text("⚡ Battery Optimization", fontSize = 12.sp)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            runCatching { Repo.unpair(ctx) }
-                                            pairId = ""
-                                            inviteCode = ""
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFCA5A5))
-                                ) {
-                                    Text("Unpair", fontSize = 12.sp)
+                                    Text("⚡ Battery", fontSize = 12.sp)
                                 }
                             }
                         }
                     }
                 }
 
-                // Security / Passphrase Encryption Card
+                // Security / Passphrase Encryption Card (ON by default at startup)
                 item {
                     Card(
                         Modifier.fillMaxWidth(),
@@ -1072,29 +1088,30 @@ private fun App() {
                         Column(Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    if (encrypted) "🔒 End-to-End Encryption ON" else "🔓 Encryption Not Set",
+                                    if (hasCustomPassphrase) "🔒 Custom Passphrase ON" else "🔒 End-to-End Encrypted",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = if (encrypted) Color(0xFF4ADE80) else Color(0xFFFBBF24)
+                                    color = Color(0xFF4ADE80)
                                 )
-                                if (encrypted) {
-                                    Spacer(Modifier.width(8.dp))
-                                    Surface(
-                                        color = Color(0xFF14532D),
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text(
-                                            "Code: $fingerprint",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF86EFAC),
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    color = Color(0xFF14532D),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        "Code: $fingerprint",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF86EFAC),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
                                 }
                             }
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                "Enter the same passphrase on both devices. Audio, images, videos & texts are encrypted before leaving your phone.",
+                                if (hasCustomPassphrase)
+                                    "Custom secret passphrase active. All messages, photos, videos and live voice are end-to-end encrypted."
+                                else
+                                    "End-to-end encryption is ON by default using your shared pair key. You may optionally set an additional custom passphrase below.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF94A3B8)
                             )
@@ -1104,7 +1121,7 @@ private fun App() {
                                 onValueChange = { passphrase = it },
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
-                                placeholder = { Text("Shared Secret Passphrase (8+ chars)") },
+                                placeholder = { Text("Custom Secret Passphrase (8+ chars)", fontSize = 12.sp) },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
                             )
@@ -1115,24 +1132,68 @@ private fun App() {
                                         Crypto.setPassphrase(ctx, pairId, passphrase.trim())
                                         passphrase = ""
                                         keyTick++
-                                        toast("Passphrase set! Verify code matches partner's.")
+                                        toast("Custom passphrase set! Verify code matches partner's.")
                                     },
                                     enabled = passphrase.trim().length >= 8,
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Text("Set Passphrase")
+                                    Text("Set Custom Key")
                                 }
-                                if (encrypted) {
+                                if (hasCustomPassphrase) {
                                     OutlinedButton(
                                         onClick = {
                                             Crypto.clear(ctx)
                                             keyTick++
+                                            toast("Reverted to automatic pair encryption")
                                         },
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Text("Turn Off")
+                                        Text("Reset to Default")
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Dedicated Destructive Partner / Unpair Card
+                item {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E1215))
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Partner Connection",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "Paired via code: ${inviteCode.ifEmpty { LocalStore.pairCode(ctx) }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF94A3B8)
+                                )
+                            }
+                            Button(
+                                onClick = { showUnpairDialog = true },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF3B1215),
+                                    contentColor = Color(0xFFF87171)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF991B1B))
+                            ) {
+                                Text("💔 Unpair", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -1179,6 +1240,180 @@ private fun App() {
             }
         }
     }
+
+    if (showUnpairDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnpairDialog = false },
+            title = {
+                Text("Unpair from Partner?", fontWeight = FontWeight.Bold, color = Color.White)
+            },
+            text = {
+                Text(
+                    "Are you sure you want to disconnect from ${widgetSettings.partnerName}? Your shared widget canvas and real-time talk will be disconnected.",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUnpairDialog = false
+                        scope.launch {
+                            runCatching { Repo.unpair(ctx) }
+                            pairId = ""
+                            inviteCode = ""
+                            keyTick++
+                            toast("Unpaired from partner")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Disconnect", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showUnpairDialog = false },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Cancel", color = Color(0xFF94A3B8))
+                }
+            },
+            containerColor = Color(0xFF141414),
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
+
+    if (showCustomizeMoodsDialog) {
+        CustomizeMoodsDialog(
+            moods = moods,
+            onDismiss = { showCustomizeMoodsDialog = false },
+            onAdd = { emoji, label ->
+                LocalStore.addCustomMood(ctx, emoji, label)
+                moods = LocalStore.getMoods(ctx)
+            },
+            onRemove = { emoji ->
+                LocalStore.removeCustomMood(ctx, emoji)
+                moods = LocalStore.getMoods(ctx)
+            },
+            onReset = {
+                LocalStore.resetMoods(ctx)
+                moods = LocalStore.getMoods(ctx)
+            }
+        )
+    }
+}
+
+@Composable
+private fun CustomizeMoodsDialog(
+    moods: List<Pair<String, String>>,
+    onDismiss: () -> Unit,
+    onAdd: (String, String) -> Unit,
+    onRemove: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    var newEmoji by remember { mutableStateOf("") }
+    var newLabel by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Customize Moods & Reactions", fontWeight = FontWeight.Bold, color = Color.White)
+        },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                Text(
+                    "Add or remove quick reactions that you and your partner can tap.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF94A3B8)
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = newEmoji,
+                        onValueChange = { newEmoji = it.take(4) },
+                        placeholder = { Text("Emoji", fontSize = 12.sp) },
+                        modifier = Modifier.width(76.dp),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    OutlinedTextField(
+                        value = newLabel,
+                        onValueChange = { newLabel = it.take(20) },
+                        placeholder = { Text("Label (e.g. Gym)", fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    Button(
+                        onClick = {
+                            if (newEmoji.isNotBlank()) {
+                                onAdd(newEmoji.trim(), newLabel.trim())
+                                newEmoji = ""
+                                newLabel = ""
+                            }
+                        },
+                        enabled = newEmoji.isNotBlank(),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) {
+                        Text("Add", fontSize = 12.sp)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Current Reactions (${moods.size})", fontSize = 11.sp, color = Color(0xFF64748B), fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.heightIn(max = 200.dp)) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(moods) { (e, l) ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF1E1E1E),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("$e  $l", fontSize = 13.sp, color = Color.White)
+                                    IconButton(
+                                        onClick = { onRemove(e) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Text("✕", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Done")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onReset,
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Reset Defaults", color = Color(0xFF94A3B8), fontSize = 12.sp)
+            }
+        },
+        containerColor = Color(0xFF141414),
+        shape = RoundedCornerShape(20.dp)
+    )
 }
 
 @Composable

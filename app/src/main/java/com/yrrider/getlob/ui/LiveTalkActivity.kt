@@ -226,6 +226,12 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
                 } else if (connected && partnerJoined) {
                     Text(if (isMuted) "Microphone muted (Tap to speak)" else "Broadcasting your voice live (Tap to mute)", fontSize = 11.sp, color = Color(0xFFCBD5E1))
                 }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (liveKey != null) "🔒 End-to-End Encrypted" else "🔓 Voice Encryption Not Set",
+                    fontSize = 11.sp,
+                    color = if (liveKey != null) Color(0xFF4ADE80) else Color(0xFFFBBF24)
+                )
                 Spacer(Modifier.height(18.dp))
 
                 val buttonBg = when {
