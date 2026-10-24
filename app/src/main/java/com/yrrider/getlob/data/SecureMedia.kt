@@ -1,0 +1,55 @@
+package com.yrrider.getlob.data
+
+import android.content.Context
+import android.net.Uri
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.URL
+
+/** Downloads media and decrypts it (if needed) into the cache so players and image loaders can use it. */
+object SecureMedia {
+    suspend fun fetch(ctx: Context, url: String): File = withContext(Dispatchers.IO) {
+        val out = File(ctx.cacheDir, "dec_${url.substringBefore('?').hashCode()}")
+        if (out.exists() && out.length() > 0) return@withContext out
+        val tmp = File(ctx.cacheDir, "dl_${System.nanoTime()}")
+        try {
+            URL(url).openStream().use { i -> tmp.outputStream().use { i.copyTo(it) } }
+            Crypto.decryptOrCopy(ctx, url, tmp, out)
+        } catch (e: Exception) {
+            out.delete(); throw e
+        } finally {
+            tmp.delete()
+        }
+        out
+    }
+
+    /** Download to a specific file name (used by the widget pipeline). */
+    suspend fun fetchTo(ctx: Context, url: String, name: String): File {
+        val dec = fetch(ctx, url)
+        return File(ctx.cacheDir, name).also { dec.copyTo(it, overwrite = true) }
+    }
+}
+
+/**
+ * Model for Coil / players: the plain URL when unencrypted (streams directly),
+ * or a decrypted local File when the media is encrypted. Null while loading or on failure.
+ */
+@Composable
+fun rememberMedia(url: String): Any? {
+    val ctx = LocalContext.current
+    val v by produceState<Any?>(null, url) {
+        value = when {
+            url.isEmpty() -> null
+            !Crypto.isEncryptedUrl(url) -> url
+            else -> runCatching { SecureMedia.fetch(ctx, url) }.getOrNull()
+        }
+    }
+    return v
+}
+
+fun mediaUri(model: Any): Uri = if (model is File) Uri.fromFile(model) else Uri.parse(model as String)

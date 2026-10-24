@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GetLob</string>
+    <string name="widget_desc">Real-time shared canvas between you and your partner</string>
+
+    <style name="Theme.GetLob" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0F172A</item>
+        <item name="android:statusBarColor">#0F172A</item>
+        <item name="android:navigationBarColor">#0F172A</item>
+    </style>
+
+    <!-- Transparent window so only the Compose panel is visible over the home screen -->
+    <style name="Theme.Overlay" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
