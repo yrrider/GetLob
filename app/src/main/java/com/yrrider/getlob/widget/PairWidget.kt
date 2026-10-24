@@ -109,13 +109,9 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
         } else null
     }
 
-    val bgAlpha = settings.bgTransparency.coerceIn(0.05f, 1f)
-    val baseColor = Color(theme.bg).copy(alpha = bgAlpha)
-
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
-            .background(ColorProvider(baseColor))
             .cornerRadius(settings.cornerDp.dp)
             .clickable(open),
         contentAlignment = Alignment.Center,

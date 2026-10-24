@@ -145,7 +145,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
                 .background(previewBg)
                 .border(
                     width = (if (s.borderWidthDp > 0) s.borderWidthDp else 0f).dp,
-                    color = Color(s.borderColor),
+                    color = Color(s.borderColor).let { it.copy(alpha = it.alpha * s.borderTransparency) },
                     shape = RoundedCornerShape(corner.dp)
                 ),
             contentAlignment = Alignment.Center
@@ -233,6 +233,22 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
                     )
                 }
             }
+        }
+
+        // Font Style (Calligraphy, Cursive, Serif, Modern)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp)
+        ) {
+            Text("Border Transparency: ${(s.borderTransparency * 100).toInt()}%", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Slider(
+                value = s.borderTransparency,
+                onValueChange = { s = s.copy(borderTransparency = it) },
+                valueRange = 0f..1f
+            )
         }
 
         // Font Style (Calligraphy, Cursive, Serif, Modern)

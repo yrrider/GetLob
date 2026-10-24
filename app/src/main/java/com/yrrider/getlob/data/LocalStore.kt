@@ -21,6 +21,7 @@ data class WidgetSettings(
     val fontColor: Long = 0xFFFFFFFFL,
     val bgTransparency: Float = 0.35f,       // 0.0f (transparent) to 1.0f (opaque)
     val borderColor: Long = 0x80FFFFFFL,     // ARGB long
+    val borderTransparency: Float = 1f,      // 0.0f = invisible, 1.0f = supplied color alpha
     val borderWidthDp: Float = 1.5f,
     val glassEffect: Boolean = true,         // Frosted glass specular gradient and highlight
     val themeIndex: Int = 0,
@@ -33,6 +34,7 @@ data class WidgetSettings(
         "fontColor" to fontColor,
         "bgTransparency" to bgTransparency.toDouble(),
         "borderColor" to borderColor,
+        "borderTransparency" to borderTransparency.toDouble(),
         "borderWidthDp" to borderWidthDp.toDouble(),
         "glassEffect" to glassEffect,
         "themeIndex" to themeIndex,
@@ -49,6 +51,7 @@ data class WidgetSettings(
                 fontColor = (m["fontColor"] as? Number)?.toLong() ?: 0xFFFFFFFFL,
                 bgTransparency = (m["bgTransparency"] as? Number)?.toFloat() ?: 0.35f,
                 borderColor = (m["borderColor"] as? Number)?.toLong() ?: 0x80FFFFFFL,
+                borderTransparency = (m["borderTransparency"] as? Number)?.toFloat()?.coerceIn(0f, 1f) ?: 1f,
                 borderWidthDp = (m["borderWidthDp"] as? Number)?.toFloat() ?: 1.5f,
                 glassEffect = (m["glassEffect"] as? Boolean) ?: true,
                 themeIndex = (m["themeIndex"] as? Number)?.toInt() ?: 0,
@@ -113,6 +116,7 @@ object LocalStore {
             fontColor = p.getLong("fontColor", 0xFFFFFFFFL),
             bgTransparency = p.getFloat("bgTransparency", 0.35f),
             borderColor = p.getLong("borderColor", 0x80FFFFFFL),
+            borderTransparency = p.getFloat("borderTransparency", 1f).coerceIn(0f, 1f),
             borderWidthDp = p.getFloat("borderWidthDp", 1.5f),
             glassEffect = p.getBoolean("glassEffect", true),
             themeIndex = p.getInt("themeIndex", fallbackTheme),
@@ -128,6 +132,7 @@ object LocalStore {
             .putLong("fontColor", s.fontColor)
             .putFloat("bgTransparency", s.bgTransparency)
             .putLong("borderColor", s.borderColor)
+            .putFloat("borderTransparency", s.borderTransparency)
             .putFloat("borderWidthDp", s.borderWidthDp)
             .putBoolean("glassEffect", s.glassEffect)
             .putInt("themeIndex", s.themeIndex)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.storage.FirebaseStorage
@@ -29,6 +30,7 @@ data class PairInfo(
     val pairId: String = "",
     val code: String = "",
     val members: List<String> = emptyList(),
+    val canvasClearedAt: Long = 0L,
 )
 
 object Repo {
@@ -80,13 +82,17 @@ object Repo {
     }
 
     suspend fun unpair(ctx: Context) {
+        fns.getHttpsCallable("leavePair").call().await()
         with(LocalStore) {
             ctx.pairId = ""
             ctx.pairCode = ""
         }
-        runCatching {
-            db.collection("users").document(uid()).update(mapOf("pairId" to ""))
-        }
+    }
+
+    /** Removes every message and shared upload for the current pair. */
+    suspend fun clearHistory(ctx: Context) {
+        require(pairId(ctx).isNotEmpty()) { "Not paired yet" }
+        fns.getHttpsCallable("clearPairHistory").call().await()
     }
 
     fun pairFlow(pairId: String): Flow<PairInfo?> = callbackFlow {
@@ -103,7 +109,8 @@ object Repo {
                     PairInfo(
                         pairId = snap.id,
                         code = code,
-                        members = members.filterIsInstance<String>()
+                        members = members.filterIsInstance<String>(),
+                        canvasClearedAt = snap.getLong("canvasClearedAt") ?: 0L
                     )
                 )
             } else {
@@ -154,8 +161,10 @@ object Repo {
         val pid = pairId(ctx)
         require(pid.isNotEmpty()) { "Not paired yet" }
         val sealed = m.copy(text = Crypto.encryptText(ctx, m.text))
-        db.collection("pairs").document(pid).collection("messages")
-            .add(sealed.copy(from = uid(), createdAt = System.currentTimeMillis()).toMap()).await()
+        val payload = sealed.copy(from = uid()).toMap().toMutableMap()
+        // Server time prevents a client from keeping messages outside the retention policy.
+        payload["createdAt"] = FieldValue.serverTimestamp()
+        db.collection("pairs").document(pid).collection("messages").add(payload).await()
     }
 
     /** Copies a picked Uri to cache, encrypts if needed, uploads, returns a download URL. */

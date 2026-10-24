@@ -39,7 +39,7 @@ data class Message(
             text = d.getString("text") ?: "",
             mediaUrl = d.getString("mediaUrl") ?: "",
             from = d.getString("from") ?: "",
-            createdAt = d.getLong("createdAt") ?: 0L,
+            createdAt = d.getTimestamp("createdAt")?.toDate()?.time ?: d.getLong("createdAt") ?: 0L,
         )
 
         /** Builds a Message from an FCM data payload (all values are strings). */

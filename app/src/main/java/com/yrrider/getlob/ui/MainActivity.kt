@@ -123,6 +123,15 @@ private fun App() {
     var passphrase by remember { mutableStateOf("") }
     val encrypted = remember(keyTick) { Crypto.hasKey(ctx) }
     val fingerprint = remember(keyTick) { Crypto.fingerprint(ctx) }
+    var headerLogo by remember {
+        mutableStateOf(ctx.getSharedPreferences("profile", Context.MODE_PRIVATE).getString("headerLogo", "") ?: "")
+    }
+    val headerLogoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            headerLogo = uri.toString()
+            ctx.getSharedPreferences("profile", Context.MODE_PRIVATE).edit().putString("headerLogo", headerLogo).apply()
+        }
+    }
 
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -237,14 +246,33 @@ private fun App() {
     val history by remember(pairId) {
         if (pairId.isNotEmpty()) Repo.messagesFlow(pairId) else flowOf(emptyList())
     }.collectAsState(initial = emptyList())
+    var lastAppliedMessageId by remember { mutableStateOf("") }
+
+    LaunchedEffect(pairInfo?.canvasClearedAt) {
+        if ((pairInfo?.canvasClearedAt ?: 0L) > 0L) {
+            MediaProcessor.clearCanvas(ctx)
+            lastAppliedMessageId = ""
+        }
+    }
+
+    // Reconcile from Firestore as well as FCM, so a missed push cannot leave the widget stale.
+    LaunchedEffect(history, keyTick) {
+        history.firstOrNull()?.takeIf { it.id != lastAppliedMessageId }?.let { latest ->
+            val visible = latest.copy(text = Crypto.decryptText(ctx, latest.text))
+            runCatching { MediaProcessor.apply(ctx, visible) }
+            lastAppliedMessageId = latest.id
+        }
+    }
 
     // Shared synced widget settings (transparency, border color, font style/color, partner name)
     var widgetSettings by remember { mutableStateOf(LocalStore.readSettings(ctx)) }
     var partnerNameInput by remember { mutableStateOf(widgetSettings.partnerName) }
+    var hasUnsavedWidgetChanges by remember { mutableStateOf(false) }
 
     // Smooth local slider states to avoid IPC / Network flood crashes
     var localTransparency by remember(widgetSettings.bgTransparency) { mutableFloatStateOf(widgetSettings.bgTransparency) }
     var localCorner by remember(widgetSettings.cornerDp) { mutableFloatStateOf(widgetSettings.cornerDp.toFloat()) }
+    var localBorderTransparency by remember(widgetSettings.borderTransparency) { mutableFloatStateOf(widgetSettings.borderTransparency) }
 
     val syncedSettings by remember(pairId) {
         if (pairId.isNotEmpty()) Repo.settingsFlow(pairId) else flowOf(null)
@@ -252,11 +280,12 @@ private fun App() {
 
     LaunchedEffect(syncedSettings) {
         syncedSettings?.let { newS ->
-            if (newS != widgetSettings) {
+            if (!hasUnsavedWidgetChanges && newS != widgetSettings) {
                 widgetSettings = newS
                 partnerNameInput = newS.partnerName
                 localTransparency = newS.bgTransparency
                 localCorner = newS.cornerDp.toFloat()
+                localBorderTransparency = newS.borderTransparency
                 LocalStore.writeSettings(ctx, newS)
                 PairWidget().updateAll(ctx)
             }
@@ -265,11 +294,18 @@ private fun App() {
 
     fun updateSettings(newS: WidgetSettings) {
         widgetSettings = newS
-        LocalStore.writeSettings(ctx, newS)
+        hasUnsavedWidgetChanges = true
+    }
+
+    fun saveWidgetSettings() {
         scope.launch {
-            runCatching {
-                Repo.saveSettings(ctx, newS)
+            try {
+                Repo.saveSettings(ctx, widgetSettings)
                 PairWidget().updateAll(ctx)
+                hasUnsavedWidgetChanges = false
+                toast("Widget settings saved")
+            } catch (e: Exception) {
+                toast("Could not save settings: ${e.message}")
             }
         }
     }
@@ -388,10 +424,15 @@ private fun App() {
                     Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(Color(0xFF38BDF8), Color(0xFFF43F5E)))),
+                        .background(Brush.linearGradient(listOf(Color(0xFF38BDF8), Color(0xFFF43F5E))))
+                        .clickable { headerLogoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("❤️", fontSize = 20.sp)
+                    if (headerLogo.isBlank()) {
+                        Text("❤️", fontSize = 20.sp)
+                    } else {
+                        AsyncImage(model = Uri.parse(headerLogo), contentDescription = "Change display picture", modifier = Modifier.fillMaxSize())
+                    }
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
@@ -402,7 +443,7 @@ private fun App() {
                     )
                     Text(
                         when {
-                            isConnectedWithPartner -> "Connected canvas"
+                            isConnectedWithPartner -> "Connected with ${widgetSettings.partnerName}"
                             pairId.isNotEmpty() -> "Waiting for partner…"
                             else -> "Pair setup"
                         },
@@ -737,7 +778,7 @@ private fun App() {
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                     color = Color.White
                                 )
-                                Text("Auto-syncs 🔄", fontSize = 11.sp, color = Color(0xFF4ADE80))
+                                Text(if (hasUnsavedWidgetChanges) "Unsaved changes" else "Saved", fontSize = 11.sp, color = if (hasUnsavedWidgetChanges) Color(0xFFFBBF24) else Color(0xFF4ADE80))
                             }
 
                             // Partner Name (shown in notification headers on both devices)
@@ -758,7 +799,7 @@ private fun App() {
                                         onClick = {
                                             val trimmed = partnerNameInput.trim().ifEmpty { "Partner" }
                                             updateSettings(widgetSettings.copy(partnerName = trimmed))
-                                            toast("Partner name saved & synced!")
+                                            toast("Partner name is ready to save")
                                         },
                                         shape = RoundedCornerShape(12.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color.Black)
@@ -788,7 +829,7 @@ private fun App() {
                                     .background(previewBg)
                                     .border(
                                         width = (if (widgetSettings.borderWidthDp > 0) widgetSettings.borderWidthDp else 0f).dp,
-                                        color = Color(widgetSettings.borderColor),
+                                        color = Color(widgetSettings.borderColor).let { it.copy(alpha = it.alpha * widgetSettings.borderTransparency) },
                                         shape = RoundedCornerShape(localCorner.dp)
                                     ),
                                 contentAlignment = Alignment.Center
@@ -888,6 +929,16 @@ private fun App() {
                                 }
                             }
 
+                            Column {
+                                Text("Border Transparency: ${(localBorderTransparency * 100).toInt()}%", fontSize = 13.sp, color = Color.White)
+                                Slider(
+                                    value = localBorderTransparency,
+                                    onValueChange = { localBorderTransparency = it },
+                                    onValueChangeFinished = { updateSettings(widgetSettings.copy(borderTransparency = localBorderTransparency)) },
+                                    valueRange = 0f..1f
+                                )
+                            }
+
                             // Corner Roundness Slider
                             Column {
                                 Text("Corner Roundness: ${localCorner.toInt()} dp", fontSize = 13.sp, color = Color.White)
@@ -930,6 +981,12 @@ private fun App() {
                             }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = ::saveWidgetSettings,
+                                    enabled = hasUnsavedWidgetChanges,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color.Black)
+                                ) { Text("Save Widget Changes", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                                 OutlinedButton(
                                     onClick = { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) },
                                     shape = RoundedCornerShape(10.dp)
@@ -1031,20 +1088,35 @@ private fun App() {
                     }
                 }
 
-                // History Feed
+                // Shared feelings history
                 item {
-                    Text(
-                        "Recent Canvas History",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Shared Feelings", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = Color.White)
+                        if (history.isNotEmpty()) {
+                            TextButton(onClick = {
+                                scope.launch {
+                                    try {
+                                        Repo.clearHistory(ctx)
+                                        MediaProcessor.clearCanvas(ctx)
+                                        lastAppliedMessageId = ""
+                                        toast("Shared feelings cleared for both of you")
+                                    } catch (e: Exception) {
+                                        toast("Could not clear history: ${e.message}")
+                                    }
+                                }
+                            }) { Text("Clear", color = Color(0xFFFCA5A5)) }
+                        }
+                    }
                 }
 
                 if (history.isEmpty()) {
                     item {
                         Text(
-                            "No messages yet. Send an image, GIF, video, or note above!",
+                            "No shared feelings yet. Send an image, GIF, video, or note above!",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF64748B)
                         )

@@ -58,7 +58,7 @@ object MediaProcessor {
             }
 
             MsgType.VOICE, MsgType.PTT ->
-                old.copy(kind = MsgType.VOICE, text = "\uD83C\uDF99 New voice message", mediaUrl = m.mediaUrl)
+                WidgetState(kind = MsgType.VOICE, text = "\uD83C\uDF99 New voice message", mediaUrl = m.mediaUrl)
 
             MsgType.SOS -> old.copy(kind = MsgType.SOS, text = "\uD83C\uDD98 SOS")
             MsgType.GAME -> old.copy(kind = MsgType.GAME, text = m.text.ifEmpty { "\uD83C\uDFAE Your turn!" })
@@ -71,6 +71,13 @@ object MediaProcessor {
     }
 
     suspend fun refresh(ctx: Context) = PairWidget().updateAll(ctx)
+
+    /** Clears the locally rendered canvas after the paired history is removed. */
+    suspend fun clearCanvas(ctx: Context) = withContext(Dispatchers.IO) {
+        clear(ctx)
+        LocalStore.write(ctx, WidgetState())
+        PairWidget().updateAll(ctx)
+    }
 
     private fun clear(ctx: Context) {
         LocalStore.framesDir(ctx).listFiles()?.forEach { it.delete() }

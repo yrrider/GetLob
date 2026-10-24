@@ -9,7 +9,7 @@ const RETENTION_HOURS = 48;
  * older than 48 hours from Firebase Storage and Firestore.
  */
 exports.cleanupOldData = onSchedule("every 2 hours", async () => {
-  const cutoff = Date.now() - RETENTION_HOURS * 3600 * 1000;
+  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - RETENTION_HOURS * 3600 * 1000);
 
   // 1) Auto-delete expired media from Firebase Storage
   try {

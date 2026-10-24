@@ -111,7 +111,10 @@ object WidgetRenderer {
                 val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.STROKE
                     strokeWidth = strokeWidthPx
-                    color = settings.borderColor.toInt()
+                    color = ColorUtils.setAlphaComponent(
+                        settings.borderColor.toInt(),
+                        (Color.alpha(settings.borderColor.toInt()) * settings.borderTransparency.coerceIn(0f, 1f)).toInt()
+                    )
                 }
                 canvas.drawRoundRect(rect, cornerPx, cornerPx, borderPaint)
 
@@ -140,7 +143,10 @@ object WidgetRenderer {
                 val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.STROKE
                     strokeWidth = strokeWidthPx
-                    color = settings.borderColor.toInt()
+                    color = ColorUtils.setAlphaComponent(
+                        settings.borderColor.toInt(),
+                        (Color.alpha(settings.borderColor.toInt()) * settings.borderTransparency.coerceIn(0f, 1f)).toInt()
+                    )
                 }
                 canvas.drawRoundRect(rect, cornerPx, cornerPx, borderPaint)
             }
@@ -264,7 +270,7 @@ object WidgetRenderer {
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = fontColor
             textSize = (w * 0.048f).coerceIn(24f, 72f)
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            typeface = getTypefaceForCaption(fontStyle)
             textAlign = Paint.Align.CENTER
             setShadowLayer(6f, 0f, 2f, 0xFF000000.toInt())
         }
@@ -287,5 +293,11 @@ object WidgetRenderer {
         canvas.drawText(caption, w / 2f, textY, textPaint)
 
         return out
+    }
+
+    private fun getTypefaceForCaption(fontStyle: String): Typeface = when (fontStyle) {
+        "Calligraphy", "Cursive" -> Typeface.create("cursive", Typeface.BOLD)
+        "Serif" -> Typeface.create(Typeface.SERIF, Typeface.BOLD)
+        else -> Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
     }
 }
