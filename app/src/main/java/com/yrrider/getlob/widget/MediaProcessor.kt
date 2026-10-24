@@ -31,9 +31,9 @@ import java.io.FileOutputStream
  * Message text must already be decrypted by the caller. Then every widget instance refreshes.
  */
 object MediaProcessor {
-    private const val MAX_FRAMES = 10
-    private const val FRAME_PX = 360          // frames are small on purpose (widget memory limit)
-    private const val POSTER_PX = 720
+    private const val MAX_FRAMES = 3
+    private const val FRAME_PX = 240          // frames are small on purpose (widget memory limit)
+    private const val POSTER_PX = 480
 
     suspend fun apply(ctx: Context, m: Message, localFile: File? = null) = withContext(Dispatchers.IO) {
         Log.d("MediaProcessor", "apply message type=${m.type}, text=${m.text}, localFile=${localFile?.name}")

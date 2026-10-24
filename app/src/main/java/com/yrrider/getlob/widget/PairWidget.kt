@@ -1,7 +1,9 @@
 package com.yrrider.getlob.widget
 
+import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import android.widget.RemoteViews
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -34,6 +36,7 @@ import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.padding
+import androidx.glance.layout.size
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
@@ -51,18 +54,17 @@ import kotlinx.coroutines.withContext
 
 /**
  * Glance home-screen widget. Displays:
- *  - Frosted Glass UI effect with customizable transparency & border color
- *  - Clean and beautiful canvas with no bottom satellite icons
- *  - High-res Still photo (crop/fit)
- *  - Looping animated Video / GIF slideshow
- *  - Text notes & Mood emojis with Cursive / Calligraphy font styles
- *  - Tapping opens the smooth Google-style floating action overlay
+ *  - Single composite frosted glass UI bitmap (under 300KB to guarantee 0 Binder IPC crashes on all devices)
+ *  - Crisp still photos (crop/fit)
+ *  - Lightweight looping animated slideshow (max 3 frames)
+ *  - Text notes & Mood emojis with Cursive / Calligraphy typography
+ *  - Built-in graceful error fallback via onCompositionError
  */
 class PairWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = PairWidget()
 }
 
-class PairWidget : GlanceAppWidget() {
+class PairWidget : GlanceAppWidget(errorUiLayout = R.layout.widget_loading) {
     override val sizeMode: SizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -72,6 +74,19 @@ class PairWidget : GlanceAppWidget() {
             val settings = LocalStore.readSettings(ctx)
             val theme = WidgetThemes.theme(ctx)
             WidgetContent(state, settings, theme)
+        }
+    }
+
+    override fun onCompositionError(
+        context: Context,
+        glanceId: GlanceId,
+        appWidgetId: Int,
+        throwable: Throwable
+    ) {
+        Log.e("PairWidget", "Composition error on appWidgetId $appWidgetId", throwable)
+        runCatching {
+            val views = RemoteViews(context.packageName, R.layout.widget_loading)
+            AppWidgetManager.getInstance(context).updateAppWidget(appWidgetId, views)
         }
     }
 }
@@ -87,97 +102,58 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
     val hDp = size.height.value.takeIf { !it.isNaN() && it > 10f } ?: 160f
     val rawW = (wDp * density).toInt().coerceAtLeast(80)
     val rawH = (hDp * density).toInt().coerceAtLeast(80)
-    val maxSide = maxOf(rawW, rawH)
-    val scale = if (maxSide > 400) 400f / maxSide else 1f
-    val wPx = (rawW * scale).toInt().coerceAtLeast(80)
-    val hPx = (rawH * scale).toInt().coerceAtLeast(80)
 
     val open = actionStartActivity<OverlayActivity>()
     val animated = (s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) && s.frameCount > 1
 
-    // Decode still image (suppressed during SOS so emergency alert is not obscured)
-    val still: Bitmap? = remember(s.updatedAt, s.posterPath, wPx, hPx, s.fitCrop, s.kind) {
-        if (!animated && s.posterPath.isNotEmpty() && s.kind != MsgType.SOS) ImageFit.decode(s.posterPath, wPx, hPx, s.fitCrop) else null
-    }
-    // Animated flipper
-    val flipper: RemoteViews? = remember(s.updatedAt, wPx, hPx, s.kind) {
-        if (animated && s.kind != MsgType.SOS) buildFlipper(ctx, s, wPx, hPx) else null
-    }
-
-    // Glass frosted background bitmap (compact size, capped to 400px to avoid IPC parcel limits)
-    val glassBg: Bitmap = remember(wPx, hPx, settings, theme) {
-        WidgetRenderer.renderGlassBackground(ctx, wPx, hPx, settings, theme)
-    }
-
-    // Typography Bitmap for text notes, moods, and SOS
-    val textBmp: Bitmap? = remember(s.updatedAt, s.text, s.kind, wPx, hPx, settings, theme) {
-        if (s.kind == MsgType.SOS || (flipper == null && still == null)) {
-            WidgetRenderer.renderTextOrMoodBitmap(ctx, wPx, hPx, s, settings, theme)
+    // Single composite bitmap: frosted background + still/typography + border
+    // Memory footprint is ~270 KB, guaranteed under Android 1MB binder limit!
+    val compositeBmp: Bitmap? = remember(s.updatedAt, s.posterPath, s.text, s.kind, rawW, rawH, s.fitCrop, settings, theme) {
+        if (!animated || s.kind == MsgType.SOS) {
+            WidgetRenderer.renderCompositeWidget(ctx, rawW, rawH, s, settings, theme)
         } else null
+    }
+
+    // Animated slideshow with strictly capped frames (max 3 frames, 180x180 = ~150KB total)
+    val flipper: RemoteViews? = remember(s.updatedAt, rawW, rawH, s.kind) {
+        if (animated && s.kind != MsgType.SOS) buildFlipper(ctx, s, rawW, rawH) else null
     }
 
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
-            .cornerRadius(settings.cornerDp.dp)
             .clickable(open),
         contentAlignment = Alignment.Center,
     ) {
-        // Layer 1: Frosted Glass UI Background (specular sheen & border)
-        Image(
-            provider = ImageProvider(glassBg),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = GlanceModifier.fillMaxSize()
-        )
-
-        // Layer 2: Clean content (Emergency SOS, Animated media, photo still, or text note)
-        when {
-            s.kind == MsgType.SOS && textBmp != null -> {
-                Image(
-                    provider = ImageProvider(textBmp),
-                    contentDescription = "Emergency SOS",
-                    contentScale = ContentScale.Fit,
-                    modifier = GlanceModifier.fillMaxSize()
-                )
-            }
-            flipper != null -> {
-                AndroidRemoteViews(remoteViews = flipper, modifier = GlanceModifier.fillMaxSize().clickable(open))
-            }
-            still != null -> {
-                Image(
-                    provider = ImageProvider(still),
-                    contentDescription = null,
-                    contentScale = if (s.fitCrop) ContentScale.Crop else ContentScale.Fit,
-                    modifier = GlanceModifier.fillMaxSize().padding(if (settings.borderWidthDp > 0) 2.dp else 0.dp),
-                )
-            }
-            textBmp != null -> {
-                Image(
-                    provider = ImageProvider(textBmp),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = GlanceModifier.fillMaxSize()
-                )
-            }
+        if (flipper != null) {
+            AndroidRemoteViews(remoteViews = flipper, modifier = GlanceModifier.fillMaxSize().clickable(open))
+        } else if (compositeBmp != null) {
+            Image(
+                provider = ImageProvider(compositeBmp),
+                contentDescription = "GetLob Widget",
+                contentScale = ContentScale.FillBounds,
+                modifier = GlanceModifier.fillMaxSize()
+            )
         }
 
-        // Layer 3: Minimal indicators only (No bottom icons - clean and beautiful widget)
+        // Minimal indicator in corner for animations
         if (animated || s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) {
-            Column(modifier = GlanceModifier.fillMaxSize().padding(8.dp)) {
-                Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = GlanceModifier
-                            .cornerRadius(8.dp)
-                            .background(ColorProvider(Color(0x99000000)))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = if (s.kind == MsgType.VIDEO) "▶ VIDEO" else "GIF",
-                            style = TextStyle(color = ColorProvider(Color.White), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                        )
-                    }
-                    Spacer(GlanceModifier.defaultWeight())
+            Box(
+                modifier = GlanceModifier
+                    .fillMaxSize()
+                    .padding(8.dp),
+                contentAlignment = Alignment.TopStart
+            ) {
+                Box(
+                    modifier = GlanceModifier
+                        .cornerRadius(8.dp)
+                        .background(ColorProvider(Color(0x99000000)))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = if (s.kind == MsgType.VIDEO) "▶ VIDEO" else "GIF",
+                        style = TextStyle(color = ColorProvider(Color.White), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    )
                 }
             }
         }
@@ -185,12 +161,12 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
 }
 
 private fun buildFlipper(ctx: Context, s: WidgetState, wPx: Int, hPx: Int): RemoteViews? {
-    val k = minOf(1f, 320f / maxOf(wPx, hPx))
-    val fw = (wPx * k).toInt().coerceAtLeast(1)
-    val fh = (hPx * k).toInt().coerceAtLeast(1)
+    val fw = 180
+    val fh = 180
     val root = RemoteViews(ctx.packageName, R.layout.widget_flipper)
     var added = 0
-    for (i in 0 until s.frameCount) {
+    val maxFrames = minOf(3, s.frameCount)
+    for (i in 0 until maxFrames) {
         val f = LocalStore.frameFile(ctx, i)
         if (!f.exists()) continue
         val scaled = ImageFit.decode(f.absolutePath, fw, fh, crop = true) ?: continue

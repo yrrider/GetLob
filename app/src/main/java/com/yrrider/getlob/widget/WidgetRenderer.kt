@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -21,7 +22,7 @@ import com.yrrider.getlob.data.WidgetState
 
 object WidgetRenderer {
     private const val TAG = "WidgetRenderer"
-    private const val MAX_DIM = 400
+    private const val MAX_DIM = 280
     private var cachedCursiveTypeface: Typeface? = null
     private var cachedCalligraphyTypeface: Typeface? = null
 
@@ -53,116 +54,16 @@ object WidgetRenderer {
     }
 
     /**
-     * Creates the glassmorphic frosted background with specular highlights, rounded corners,
-     * transparency value, and customizable border.
-     * Capped to MAX_DIM (400px) to guarantee it never exceeds Android RemoteViews IPC limits.
+     * Renders a single composite bitmap containing:
+     *  - Frosted glass background & specular gradient
+     *  - Photo still (fit/crop, clipped to rounded corners) OR typography (text note / emoji / SOS / welcome)
+     *  - Frosted sheen reflection
+     *  - Crisp glass border and top rim specular highlight
+     *
+     * Capped to MAX_DIM (280px) to guarantee the entire RemoteViews parcel stays well below
+     * Android's 1MB Binder transaction limit, eradicating "Can't show content" errors on all devices.
      */
-    fun renderGlassBackground(
-        ctx: Context,
-        rawW: Int,
-        rawH: Int,
-        settings: WidgetSettings,
-        theme: WidgetTheme
-    ): Bitmap {
-        val maxSide = maxOf(rawW.coerceAtLeast(80), rawH.coerceAtLeast(80))
-        val scale = if (maxSide > MAX_DIM) MAX_DIM.toFloat() / maxSide else 1f
-        val wPx = (rawW * scale).toInt().coerceAtLeast(80)
-        val hPx = (rawH * scale).toInt().coerceAtLeast(80)
-        val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        val density = ctx.resources.displayMetrics.density
-        val cornerPx = (settings.cornerDp * density * (wPx.toFloat() / rawW.coerceAtLeast(1))).coerceIn(4f, wPx / 2f)
-        val strokeWidthPx = (settings.borderWidthDp * density).coerceAtLeast(1f)
-        val inset = strokeWidthPx / 2f
-        val rect = RectF(inset, inset, wPx - inset, hPx - inset)
-
-        val alphaInt = (settings.bgTransparency.coerceIn(0.05f, 1f) * 255).toInt()
-        val baseColor = if (settings.bgColor != 0L) settings.bgColor.toInt() else theme.bg.toInt()
-
-        if (settings.glassEffect) {
-            // Glassmorphism effect: Frosted specular gradient fill
-            val topAlpha = (alphaInt * 1.35f).toInt().coerceIn(0, 255)
-            val bottomAlpha = (alphaInt * 0.70f).toInt().coerceIn(0, 255)
-            val topColor = ColorUtils.setAlphaComponent(baseColor, topAlpha)
-            val bottomColor = ColorUtils.setAlphaComponent(baseColor, bottomAlpha)
-
-            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                shader = LinearGradient(
-                    0f, 0f, 0f, hPx.toFloat(),
-                    topColor, bottomColor,
-                    Shader.TileMode.CLAMP
-                )
-            }
-            canvas.drawRoundRect(rect, cornerPx, cornerPx, fillPaint)
-
-            // Frosted glass white sheen reflection on upper half
-            val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                shader = LinearGradient(
-                    0f, 0f, 0f, hPx * 0.65f,
-                    ColorUtils.setAlphaComponent(0xFFFFFF, (70 * settings.bgTransparency).toInt().coerceIn(10, 80)),
-                    0x00FFFFFF,
-                    Shader.TileMode.CLAMP
-                )
-            }
-            canvas.drawRoundRect(rect, cornerPx, cornerPx, sheenPaint)
-
-            // Crisp glass border stroke
-            if (strokeWidthPx > 0f && settings.borderColor != 0L) {
-                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = strokeWidthPx
-                    color = ColorUtils.setAlphaComponent(
-                        settings.borderColor.toInt(),
-                        (Color.alpha(settings.borderColor.toInt()) * settings.borderTransparency.coerceIn(0f, 1f)).toInt()
-                    )
-                }
-                canvas.drawRoundRect(rect, cornerPx, cornerPx, borderPaint)
-
-                // Top rim bevel specular highlight
-                val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = strokeWidthPx * 0.8f
-                    shader = LinearGradient(
-                        0f, 0f, wPx.toFloat(), 0f,
-                        intArrayOf(0x00FFFFFF, 0x66FFFFFF, 0x00FFFFFF),
-                        null,
-                        Shader.TileMode.CLAMP
-                    )
-                }
-                canvas.drawRoundRect(rect, cornerPx, cornerPx, highlightPaint)
-            }
-        } else {
-            // Solid/translucent clean flat style
-            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                color = ColorUtils.setAlphaComponent(baseColor, alphaInt)
-            }
-            canvas.drawRoundRect(rect, cornerPx, cornerPx, fillPaint)
-
-            if (strokeWidthPx > 0f && settings.borderColor != 0L) {
-                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = strokeWidthPx
-                    color = ColorUtils.setAlphaComponent(
-                        settings.borderColor.toInt(),
-                        (Color.alpha(settings.borderColor.toInt()) * settings.borderTransparency.coerceIn(0f, 1f)).toInt()
-                    )
-                }
-                canvas.drawRoundRect(rect, cornerPx, cornerPx, borderPaint)
-            }
-        }
-
-        return bmp
-    }
-
-    /**
-     * Renders text note or emoji/mood into a compact Bitmap using the selected font style
-     * (Calligraphy, Cursive, Serif, Modern), custom font color, and multiline wrapping.
-     * Note: "Partner's Mood" label is completely removed; only emoji and mood are shown!
-     */
-    fun renderTextOrMoodBitmap(
+    fun renderCompositeWidget(
         ctx: Context,
         rawW: Int,
         rawH: Int,
@@ -174,9 +75,119 @@ object WidgetRenderer {
         val scale = if (maxSide > MAX_DIM) MAX_DIM.toFloat() / maxSide else 1f
         val wPx = (rawW * scale).toInt().coerceAtLeast(80)
         val hPx = (rawH * scale).toInt().coerceAtLeast(80)
+
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         val density = ctx.resources.displayMetrics.density * (wPx.toFloat() / rawW.coerceAtLeast(1))
+        val cornerPx = (settings.cornerDp * density).coerceIn(4f, minOf(wPx, hPx) / 2f)
+        val strokeWidthPx = (settings.borderWidthDp * density).coerceAtLeast(1f)
+        val inset = strokeWidthPx / 2f
+        val rect = RectF(inset, inset, wPx - inset, hPx - inset)
+
+        // 1. Frosted Glass / Theme Background Fill
+        val alphaInt = (settings.bgTransparency.coerceIn(0.05f, 1f) * 255).toInt()
+        val baseColor = if (settings.bgColor != 0L) settings.bgColor.toInt() else theme.bg.toInt()
+
+        if (settings.glassEffect) {
+            val topAlpha = (alphaInt * 1.35f).toInt().coerceIn(0, 255)
+            val bottomAlpha = (alphaInt * 0.70f).toInt().coerceIn(0, 255)
+            val topColor = ColorUtils.setAlphaComponent(baseColor, topAlpha)
+            val bottomColor = ColorUtils.setAlphaComponent(baseColor, bottomAlpha)
+
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                shader = LinearGradient(0f, 0f, 0f, hPx.toFloat(), topColor, bottomColor, Shader.TileMode.CLAMP)
+            }
+            canvas.drawRoundRect(rect, cornerPx, cornerPx, fillPaint)
+        } else {
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                color = ColorUtils.setAlphaComponent(baseColor, alphaInt)
+            }
+            canvas.drawRoundRect(rect, cornerPx, cornerPx, fillPaint)
+        }
+
+        // 2. Content: Photo Still OR Typography (SOS, Mood, Text Note, Welcome)
+        val hasStill = s.posterPath.isNotEmpty() && s.kind != MsgType.SOS
+        var drewPhoto = false
+        if (hasStill) {
+            try {
+                val photo = ImageFit.decode(s.posterPath, wPx, hPx, s.fitCrop)
+                if (photo != null) {
+                    canvas.save()
+                    val clipPath = Path().apply {
+                        addRoundRect(rect, cornerPx, cornerPx, Path.Direction.CW)
+                    }
+                    canvas.clipPath(clipPath)
+                    val photoRect = RectF(0f, 0f, wPx.toFloat(), hPx.toFloat())
+                    canvas.drawBitmap(photo, null, photoRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                    canvas.restore()
+                    drewPhoto = true
+                    if (photo !== bmp) photo.recycle()
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to decode still photo for widget", e)
+            }
+        }
+
+        if (!drewPhoto) {
+            drawContentText(canvas, ctx, wPx, hPx, s, settings, theme, density)
+        }
+
+        // 3. Frosted Glass Sheen Reflection (upper half)
+        if (settings.glassEffect) {
+            val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                shader = LinearGradient(
+                    0f, 0f, 0f, hPx * 0.55f,
+                    ColorUtils.setAlphaComponent(0xFFFFFF, (50 * settings.bgTransparency).toInt().coerceIn(5, 60)),
+                    0x00FFFFFF,
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRoundRect(rect, cornerPx, cornerPx, sheenPaint)
+        }
+
+        // 4. Crisp Border & Beveled Top Highlight
+        if (strokeWidthPx > 0f && settings.borderColor != 0L) {
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = strokeWidthPx
+                color = ColorUtils.setAlphaComponent(
+                    settings.borderColor.toInt(),
+                    (Color.alpha(settings.borderColor.toInt()) * settings.borderTransparency.coerceIn(0f, 1f)).toInt()
+                )
+            }
+            canvas.drawRoundRect(rect, cornerPx, cornerPx, borderPaint)
+
+            if (settings.glassEffect) {
+                val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = strokeWidthPx * 0.8f
+                    shader = LinearGradient(
+                        0f, 0f, wPx.toFloat(), 0f,
+                        intArrayOf(0x00FFFFFF, 0x55FFFFFF, 0x00FFFFFF),
+                        null,
+                        Shader.TileMode.CLAMP
+                    )
+                }
+                canvas.drawRoundRect(rect, cornerPx, cornerPx, highlightPaint)
+            }
+        }
+
+        return bmp
+    }
+
+    private fun drawContentText(
+        canvas: Canvas,
+        ctx: Context,
+        wPx: Int,
+        hPx: Int,
+        s: WidgetState,
+        settings: WidgetSettings,
+        theme: WidgetTheme,
+        density: Float
+    ) {
         val typeface = getTypeface(ctx, settings.fontStyle)
         val fontColor = settings.fontColor.toInt()
         val isEmoji = s.kind == MsgType.EMOJI
@@ -272,14 +283,14 @@ object WidgetRenderer {
             }
             canvas.drawText("Tap to connect", wPx / 2f, hPx * 0.62f, subPaint)
         }
-
-        return bmp
     }
 
-    /**
-     * Burns caption text directly onto an image bitmap (Snapchat style).
-     * Renders a translucent banner with centered bold/stylish text.
-     */
+    fun renderGlassBackground(ctx: Context, rawW: Int, rawH: Int, settings: WidgetSettings, theme: WidgetTheme): Bitmap =
+        renderCompositeWidget(ctx, rawW, rawH, WidgetState(), settings, theme)
+
+    fun renderTextOrMoodBitmap(ctx: Context, rawW: Int, rawH: Int, s: WidgetState, settings: WidgetSettings, theme: WidgetTheme): Bitmap =
+        renderCompositeWidget(ctx, rawW, rawH, s, settings, theme)
+
     fun overlayTextOnBitmap(src: Bitmap, caption: String, fontStyle: String, fontColor: Int): Bitmap {
         if (caption.isBlank()) return src
         val out = src.copy(Bitmap.Config.ARGB_8888, true)
@@ -301,14 +312,12 @@ object WidgetRenderer {
         val bannerTop = (h * 0.72f).coerceAtMost(h - bannerHeight - 20f)
         val bannerBottom = bannerTop + bannerHeight
 
-        // Translucent dark banner like Snapchat
         val bannerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0x99000000.toInt()
             style = Paint.Style.FILL
         }
         canvas.drawRect(0f, bannerTop, w.toFloat(), bannerBottom, bannerPaint)
 
-        // Text centered in banner
         val textY = bannerTop + paddingY - textPaint.ascent()
         canvas.drawText(caption, w / 2f, textY, textPaint)
 

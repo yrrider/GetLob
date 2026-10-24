@@ -35,6 +35,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.yrrider.getlob.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -250,6 +252,9 @@ private fun App() {
     }
 
     val isConnectedWithPartner = (pairInfo?.members?.size ?: 0) >= 2
+    LaunchedEffect(isConnectedWithPartner) {
+        if (isConnectedWithPartner) error = ""
+    }
     val history by remember(pairId) {
         if (pairId.isNotEmpty()) Repo.messagesFlow(pairId) else flowOf(emptyList())
     }.collectAsState(initial = emptyList())
@@ -496,14 +501,27 @@ private fun App() {
             Surface(
                 color = Color(0x33EF4444),
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x55EF4444))
             ) {
-                Text(
-                    error,
-                    color = Color(0xFFFCA5A5),
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(10.dp)
-                )
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        error,
+                        color = Color(0xFFFCA5A5),
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { error = "" },
+                        modifier = Modifier.size(22.dp)
+                    ) {
+                        Text("✕", color = Color(0xFFFCA5A5), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
 
@@ -584,9 +602,11 @@ private fun App() {
                         Button(
                             onClick = {
                                 scope.launch {
+                                    error = ""
                                     try {
                                         inviteCode = Repo.createPair(ctx)
                                         pairId = Repo.pairId(ctx)
+                                        error = ""
                                     } catch (e: Exception) {
                                         error = e.message ?: "Failed to generate code"
                                     }
@@ -606,7 +626,10 @@ private fun App() {
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = joinCode,
-                            onValueChange = { joinCode = it.uppercase().take(6) },
+                            onValueChange = {
+                                joinCode = it.uppercase().take(6)
+                                error = ""
+                            },
                             singleLine = true,
                             placeholder = { Text("6-CHAR CODE") },
                             modifier = Modifier.fillMaxWidth()
@@ -615,9 +638,11 @@ private fun App() {
                         Button(
                             onClick = {
                                 scope.launch {
+                                    error = ""
                                     try {
                                         Repo.joinPair(ctx, joinCode)
                                         pairId = Repo.pairId(ctx)
+                                        error = ""
                                     } catch (e: Exception) {
                                         error = e.message ?: "Invalid code"
                                     }
@@ -669,16 +694,16 @@ private fun App() {
                             ) {
                                 ActionTile(
                                     modifier = Modifier.weight(1f),
-                                    icon = "📸",
+                                    iconRes = R.drawable.ic_snap_camera,
                                     label = "Snap",
                                     color = Color(0xFFFBBF24),
                                     onClick = { launchCameraSnap() }
                                 )
                                 ActionTile(
                                     modifier = Modifier.weight(1f),
-                                    icon = "🖼️",
+                                    iconRes = R.drawable.ic_photo_gallery,
                                     label = "Photo",
-                                    color = Color(0xFF0284C7),
+                                    color = Color(0xFF38BDF8),
                                     onClick = {
                                         imagePicker.launch(
                                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -687,9 +712,9 @@ private fun App() {
                                 )
                                 ActionTile(
                                     modifier = Modifier.weight(1f),
-                                    icon = "🎞️",
+                                    iconRes = R.drawable.ic_gif_motion,
                                     label = "GIF",
-                                    color = Color(0xFF8B5CF6),
+                                    color = Color(0xFFA855F7),
                                     onClick = {
                                         gifPicker.launch(
                                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.SingleMimeType("image/gif"))
@@ -698,7 +723,7 @@ private fun App() {
                                 )
                                 ActionTile(
                                     modifier = Modifier.weight(1f),
-                                    icon = "📹",
+                                    iconRes = R.drawable.ic_video_record,
                                     label = "Video",
                                     color = Color(0xFFEC4899),
                                     onClick = {
@@ -709,7 +734,7 @@ private fun App() {
                                 )
                                 ActionTile(
                                     modifier = Modifier.weight(1f),
-                                    icon = "📳",
+                                    iconRes = R.drawable.ic_vibe_pulse,
                                     label = "Vibe",
                                     color = Color(0xFF10B981),
                                     onClick = {
@@ -1419,7 +1444,7 @@ private fun CustomizeMoodsDialog(
 @Composable
 private fun ActionTile(
     modifier: Modifier = Modifier,
-    icon: String,
+    iconRes: Int,
     label: String,
     color: Color,
     onClick: () -> Unit
@@ -1430,15 +1455,28 @@ private fun ActionTile(
             .clickable(onClick = onClick),
         color = Color(0xFF141414),
         shape = RoundedCornerShape(14.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.4f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.35f))
     ) {
         Column(
             Modifier.padding(vertical = 12.dp, horizontal = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Text(icon, fontSize = 24.sp)
-            Spacer(Modifier.height(4.dp))
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(color.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(iconRes),
+                    contentDescription = label,
+                    tint = color,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
             Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
         }
     }

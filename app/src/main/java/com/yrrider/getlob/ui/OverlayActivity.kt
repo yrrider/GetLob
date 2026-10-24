@@ -41,6 +41,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.yrrider.getlob.R
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -391,16 +393,16 @@ private fun OverlayRoot(
                         Mode.MEDIA_CHOOSER -> {
                             Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                    SubOption(icon = "📸", label = "Snap") {
+                                    SubOption(iconRes = R.drawable.ic_snap_camera, label = "Snap", color = Color(0xFFFBBF24)) {
                                         launchCameraSnap()
                                     }
-                                    SubOption(icon = "🖼️", label = "Photo") {
+                                    SubOption(iconRes = R.drawable.ic_photo_gallery, label = "Photo", color = Color(0xFF38BDF8)) {
                                         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                     }
-                                    SubOption(icon = "🎞️", label = "GIF") {
+                                    SubOption(iconRes = R.drawable.ic_gif_motion, label = "GIF", color = Color(0xFFA855F7)) {
                                         gifPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.SingleMimeType("image/gif")))
                                     }
-                                    SubOption(icon = "📹", label = "Video") {
+                                    SubOption(iconRes = R.drawable.ic_video_record, label = "Video", color = Color(0xFFEC4899)) {
                                         videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
                                     }
                                 }
@@ -648,7 +650,7 @@ private fun MinimalRoundIcon(
 }
 
 @Composable
-private fun SubOption(icon: String, label: String, onClick: () -> Unit) {
+private fun SubOption(iconRes: Int, label: String, color: Color, onClick: () -> Unit) {
     Column(
         Modifier
             .clip(RoundedCornerShape(12.dp))
@@ -660,10 +662,16 @@ private fun SubOption(icon: String, label: String, onClick: () -> Unit) {
             Modifier
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF181818)),
+                .background(color.copy(alpha = 0.15f))
+                .border(1.dp, color.copy(alpha = 0.35f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(icon, fontSize = 22.sp)
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = label,
+                tint = color,
+                modifier = Modifier.size(22.dp)
+            )
         }
         Spacer(Modifier.height(4.dp))
         Text(label, fontSize = 11.sp, color = Color.White)

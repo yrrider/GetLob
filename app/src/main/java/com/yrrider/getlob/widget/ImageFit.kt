@@ -17,7 +17,7 @@ import kotlin.math.roundToInt
  */
 object ImageFit {
     /** Hard cap on pixels per bitmap: ~0.64 MP => ~2.5 MB ARGB. Keeps several frames well under budget. */
-    private const val MAX_PIXELS = 640_000
+    private const val MAX_PIXELS = 160_000
 
     /**
      * Resizes and compresses an image for ultra-fast network upload (< 200KB)
