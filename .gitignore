@@ -20,6 +20,7 @@ app/build/
 
 # Gradle files
 .gradle/
+.gradle-user/
 buildOutputCleanup/
 
 # Local configuration file (sdk.dir, ndk.dir, etc.)
