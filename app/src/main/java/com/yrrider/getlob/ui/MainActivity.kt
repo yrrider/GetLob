@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -120,7 +121,9 @@ private fun App() {
     // Instant Snap & Text over image state
     var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
     var photoCaption by remember { mutableStateOf("") }
-    var cameraTempFile by remember { mutableStateOf<File?>(null) }
+    var cameraTempPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var isCreatingCode by remember { mutableStateOf(false) }
+    var isJoiningCode by remember { mutableStateOf(false) }
 
     // Moods & Reactions state
     var moods by remember { mutableStateOf(LocalStore.getMoods(ctx)) }
@@ -169,15 +172,21 @@ private fun App() {
 
     // Camera Launcher for Instant Snap
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        if (ok && cameraTempFile != null && cameraTempFile!!.exists() && cameraTempFile!!.length() > 0) {
-            pendingPhotoFile = cameraTempFile
+        val path = cameraTempPath
+        if (ok && path != null) {
+            val f = File(path)
+            if (f.exists() && f.length() > 0) {
+                pendingPhotoFile = f
+            }
         }
     }
 
     val cameraPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) {
             val f = File(ctx.cacheDir, "snap_${System.currentTimeMillis()}.jpg")
-            cameraTempFile = f
+            f.parentFile?.mkdirs()
+            if (!f.exists()) runCatching { f.createNewFile() }
+            cameraTempPath = f.absolutePath
             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.provider", f)
             cameraLauncher.launch(uri)
         } else {
@@ -221,21 +230,32 @@ private fun App() {
         if (Build.VERSION.SDK_INT >= 33) {
             runCatching { notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS) }
         }
+        // 1. Immediately populate from local cache so user never waits if already paired
+        pairId = with(LocalStore) { ctx.pairId }
+        if (inviteCode.isEmpty()) {
+            inviteCode = with(LocalStore) { ctx.pairCode }
+        }
+
+        // 2. Authenticate and verify pair with server
         try {
             me = Repo.uid()
-            runCatching {
-                val t = FirebaseMessaging.getInstance().token.await()
-                Repo.saveToken(t, ctx)
-            }
-            pairId = Repo.pairId(ctx)
-            if (inviteCode.isEmpty()) {
-                inviteCode = with(LocalStore) { ctx.pairCode }
+            val remotePairId = Repo.pairId(ctx)
+            if (remotePairId.isNotEmpty()) {
+                pairId = remotePairId
             }
         } catch (e: Throwable) {
             Log.e("GetLob", "Init error", e)
             error = e.message ?: "Setup failed"
         } finally {
             ready = true
+        }
+
+        // 3. Register FCM token asynchronously in background without blocking screen
+        launch(Dispatchers.IO) {
+            runCatching {
+                val t = FirebaseMessaging.getInstance().token.await()
+                Repo.saveToken(t, ctx)
+            }
         }
     }
 
@@ -405,10 +425,13 @@ private fun App() {
                             }
 
                             val url = Repo.upload(ctx, finalFile, "jpg")
-                            runCatching { finalFile.copyTo(SecureMedia.cacheFile(ctx, url), overwrite = true) }
-                            sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = captionToSend), localFile = finalFile)
-                            if (finalFile != fileToSend) finalFile.delete()
-                            if (fileToSend.name.startsWith("snap_")) fileToSend.delete()
+                            val cached = SecureMedia.cacheFile(ctx, url)
+                            runCatching { finalFile.copyTo(cached, overwrite = true) }
+                            sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = captionToSend), localFile = cached)
+                            runCatching {
+                                if (finalFile != fileToSend && finalFile.exists()) finalFile.delete()
+                                if (fileToSend.exists() && fileToSend.name.startsWith("snap_")) fileToSend.delete()
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color(0xFF000000)),
@@ -526,8 +549,22 @@ private fun App() {
         }
 
         if (!ready) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFF38BDF8))
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF000000)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    NeonHeartLoader(size = 84.dp)
+                    Spacer(Modifier.height(20.dp))
+                    Text(
+                        "Connecting to GetLob…",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFCBD5E1)
+                    )
+                }
             }
             return@Column
         }
@@ -602,6 +639,7 @@ private fun App() {
                         Button(
                             onClick = {
                                 scope.launch {
+                                    isCreatingCode = true
                                     error = ""
                                     try {
                                         inviteCode = Repo.createPair(ctx)
@@ -609,13 +647,23 @@ private fun App() {
                                         error = ""
                                     } catch (e: Exception) {
                                         error = e.message ?: "Failed to generate code"
+                                    } finally {
+                                        isCreatingCode = false
                                     }
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !isCreatingCode,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color.Black)
                         ) {
-                            Text("Create a Pair Code", fontWeight = FontWeight.Bold)
+                            if (isCreatingCode) {
+                                NeonHeartLoader(size = 24.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Text("Generating Code…", fontWeight = FontWeight.Bold)
+                            } else {
+                                Text("Create a Pair Code", fontWeight = FontWeight.Bold)
+                            }
                         }
 
                         Spacer(Modifier.height(16.dp))
@@ -638,6 +686,7 @@ private fun App() {
                         Button(
                             onClick = {
                                 scope.launch {
+                                    isJoiningCode = true
                                     error = ""
                                     try {
                                         Repo.joinPair(ctx, joinCode)
@@ -645,13 +694,22 @@ private fun App() {
                                         error = ""
                                     } catch (e: Exception) {
                                         error = e.message ?: "Invalid code"
+                                    } finally {
+                                        isJoiningCode = false
                                     }
                                 }
                             },
-                            enabled = joinCode.length == 6,
-                            modifier = Modifier.fillMaxWidth()
+                            enabled = joinCode.length == 6 && !isJoiningCode,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Join Partner")
+                            if (isJoiningCode) {
+                                NeonHeartLoader(size = 24.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Text("Joining Partner…", fontWeight = FontWeight.Bold)
+                            } else {
+                                Text("Join Partner", fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }

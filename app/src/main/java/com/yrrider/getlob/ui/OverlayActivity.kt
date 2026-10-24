@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -475,8 +476,7 @@ private fun OverlayRoot(
                                             onClick = {
                                                 val fileToSend = file
                                                 val caption = photoCaption.trim()
-                                                if (pendingPhotoFile?.name?.startsWith("snap_") == true) pendingPhotoFile?.delete()
-                                            pendingPhotoFile = null
+                                                pendingPhotoFile = null
                                                 photoCaption = ""
                                                 job {
                                                     val finalFile = withContext(Dispatchers.IO) {
@@ -501,10 +501,13 @@ private fun OverlayRoot(
                                                         } else optimized
                                                     }
                                                     val url = Repo.upload(ctx, finalFile, "jpg")
-                                                    runCatching { finalFile.copyTo(SecureMedia.cacheFile(ctx, url), overwrite = true) }
-                                                    sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = caption), localFile = finalFile)
-                                                    if (finalFile != fileToSend) finalFile.delete()
-                                                    if (fileToSend.name.startsWith("snap_")) fileToSend.delete()
+                                                    val cached = SecureMedia.cacheFile(ctx, url)
+                                                    runCatching { finalFile.copyTo(cached, overwrite = true) }
+                                                    sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = caption), localFile = cached)
+                                                    runCatching {
+                                                        if (finalFile != fileToSend && finalFile.exists()) finalFile.delete()
+                                                        if (fileToSend.exists() && fileToSend.name.startsWith("snap_")) fileToSend.delete()
+                                                    }
                                                 }
                                             },
                                             shape = RoundedCornerShape(12.dp),
