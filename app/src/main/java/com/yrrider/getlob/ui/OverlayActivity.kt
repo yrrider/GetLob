@@ -58,6 +58,7 @@ import com.yrrider.getlob.data.LocalStore
 import com.yrrider.getlob.data.Message
 import com.yrrider.getlob.data.MsgType
 import com.yrrider.getlob.data.Repo
+import com.yrrider.getlob.data.SecureMedia
 import com.yrrider.getlob.data.mediaUri
 import com.yrrider.getlob.data.rememberMedia
 import com.yrrider.getlob.fcm.AudioAlerts
@@ -138,7 +139,7 @@ class OverlayActivity : ComponentActivity() {
     }
 }
 
-private enum class Mode { MENU, MEDIA_CHOOSER, CAPTION, TEXT, VOICE, PTT, GAME, PLAY, ALERT, CONFIRM_SOS }
+private enum class Mode { MENU, MEDIA_CHOOSER, CAPTION, TEXT, GAME, PLAY, ALERT, CONFIRM_SOS }
 
 private val EMOJIS = listOf(
     "❤️" to "Love",
@@ -174,10 +175,9 @@ private fun OverlayRoot(
         )
     }
     var busy by remember { mutableStateOf(false) }
-    var visible by remember { mutableStateOf(false) }
+    var visible by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
-        visible = true
         if (sos) {
             AudioAlerts.playSosSound(ctx)
             AudioAlerts.vibrate(ctx, isSos = true)
@@ -199,11 +199,11 @@ private fun OverlayRoot(
         }
     }
 
-    suspend fun sendAndShow(m: Message) {
-        Repo.send(ctx, m)
+    suspend fun sendAndShow(m: Message, localFile: File? = null) {
         if (m.type in listOf(MsgType.TEXT, MsgType.EMOJI, MsgType.IMAGE, MsgType.GIF, MsgType.VIDEO)) {
-            runCatching { MediaProcessor.apply(ctx, m) }
+            runCatching { MediaProcessor.apply(ctx, m, localFile) }
         }
+        Repo.send(ctx, m)
     }
 
     var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
@@ -254,14 +254,7 @@ private fun OverlayRoot(
         }
     }
 
-    val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (!ok) toast("Microphone permission is needed")
-    }
-    fun hasMic() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    LaunchedEffect(mode) {
-        if ((mode == Mode.VOICE || mode == Mode.PTT) && !hasMic()) micPerm.launch(Manifest.permission.RECORD_AUDIO)
-    }
 
     // Calculate vertical position near the home-screen widget
     val density = LocalDensity.current.density
@@ -288,23 +281,20 @@ private fun OverlayRoot(
     ) {
         AnimatedVisibility(
             visible = visible,
-            enter = fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) +
-                    scaleIn(initialScale = 0.82f, animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)) +
-                    slideInVertically(initialOffsetY = { 24 }),
-            exit = fadeOut() + scaleOut(targetScale = 0.85f),
+            enter = fadeIn(androidx.compose.animation.core.tween(120, easing = androidx.compose.animation.core.LinearOutSlowInEasing)) +
+                    scaleIn(initialScale = 0.94f, animationSpec = androidx.compose.animation.core.tween(140, easing = androidx.compose.animation.core.FastOutSlowInEasing)),
+            exit = fadeOut(androidx.compose.animation.core.tween(90)) + scaleOut(targetScale = 0.95f, animationSpec = androidx.compose.animation.core.tween(90)),
             modifier = Modifier
                 .padding(top = topOffsetDp, start = 16.dp, end = 16.dp)
                 .clickable(none, null) { /* don't dismiss when tapping pill */ }
         ) {
             Surface(
-                shape = RoundedCornerShape(32.dp),
-                color = Color(0xF5080808),
-                tonalElevation = 8.dp,
-                shadowElevation = 16.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
-                modifier = Modifier
-                    .wrapContentWidth()
-                    .animateContentSize()
+                shape = RoundedCornerShape(28.dp),
+                color = Color(0xF2080808),
+                tonalElevation = 4.dp,
+                shadowElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x2BFFFFFF)),
+                modifier = Modifier.wrapContentWidth()
             ) {
                 Column(
                     Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -345,14 +335,7 @@ private fun OverlayRoot(
                                     onClick = { mode = Mode.TEXT }
                                 )
 
-                                // 4. Voice Note
-                                MinimalRoundIcon(
-                                    emoji = "🎙️",
-                                    gradient = listOf(Color(0xFF6366F1), Color(0xFF4F46E5)),
-                                    onClick = { mode = Mode.VOICE }
-                                )
-
-                                // 5. Tap to talk (Live Talk)
+                                // 4. Tap to talk (Live Talk)
                                 MinimalRoundIcon(
                                     emoji = "📡",
                                     gradient = listOf(Color(0xFF06B6D4), Color(0xFF3B82F6)),
@@ -366,14 +349,14 @@ private fun OverlayRoot(
                                     }
                                 )
 
-                                // 6. Tic-Tac-Toe Game
+                                // 5. Tic-Tac-Toe Game
                                 MinimalRoundIcon(
                                     emoji = "🎮",
                                     gradient = listOf(Color(0xFF14B8A6), Color(0xFF0D9488)),
                                     onClick = { mode = Mode.GAME }
                                 )
 
-                                // 7. Vibe (Haptic pulse)
+                                // 6. Vibe (Haptic pulse)
                                 MinimalRoundIcon(
                                     emoji = "📳",
                                     gradient = listOf(Color(0xFF10B981), Color(0xFF059669)),
@@ -383,7 +366,7 @@ private fun OverlayRoot(
                                     }
                                 )
 
-                                // 8. SOS
+                                // 7. SOS
                                 MinimalRoundIcon(
                                     emoji = "🆘",
                                     gradient = listOf(Color(0xFFEF4444), Color(0xFFB91C1C)),
@@ -516,7 +499,8 @@ private fun OverlayRoot(
                                                         } else optimized
                                                     }
                                                     val url = Repo.upload(ctx, finalFile, "jpg")
-                                                    sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = caption))
+                                                    runCatching { finalFile.copyTo(SecureMedia.cacheFile(ctx, url), overwrite = true) }
+                                                    sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = caption), localFile = finalFile)
                                                     if (finalFile != fileToSend) finalFile.delete()
                                                     if (fileToSend.name.startsWith("snap_")) fileToSend.delete()
                                                 }
@@ -586,24 +570,6 @@ private fun OverlayRoot(
                             }
                         }
 
-                        // Voice Note
-                        Mode.VOICE, Mode.PTT -> {
-                            val type = if (mode == Mode.PTT) MsgType.PTT else MsgType.VOICE
-                            Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    if (mode == Mode.PTT) "Hold to talk" else "Hold to record voice note",
-                                    fontSize = 14.sp,
-                                    textAlign = TextAlign.Center,
-                                    color = Color.White
-                                )
-                                Spacer(Modifier.height(12.dp))
-                                HoldToRecord(::hasMic) { f ->
-                                    job { Repo.send(ctx, Message(type = type, mediaUrl = Repo.upload(ctx, f, "m4a"))) }
-                                }
-                                TextButton({ mode = Mode.MENU }) { Text("Back", color = Color(0xFF94A3B8)) }
-                            }
-                        }
-
                         Mode.GAME -> {
                             TicTacToePanel(
                                 onBack = { mode = Mode.MENU },
@@ -668,10 +634,9 @@ private fun MinimalRoundIcon(
     Box(
         Modifier
             .size(46.dp)
-            .shadow(6.dp, CircleShape)
             .clip(CircleShape)
             .background(Brush.linearGradient(gradient))
-            .border(1.dp, Color(0x4DFFFFFF), CircleShape)
+            .border(1.dp, Color(0x33FFFFFF), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -702,29 +667,7 @@ private fun SubOption(icon: String, label: String, onClick: () -> Unit) {
     }
 }
 
-/** Press-and-hold to record, release to send. Works because this activity is in the foreground. */
-@Composable
-private fun HoldToRecord(hasMic: () -> Boolean, onRecorded: (File) -> Unit) {
-    val ctx = LocalContext.current
-    val recorder = remember { Recorder(ctx) }
-    var recording by remember { mutableStateOf(false) }
-    DisposableEffect(Unit) { onDispose { recorder.release() } }
-    Box(
-        Modifier.size(100.dp).clip(CircleShape)
-            .background(if (recording) Color(0xFFEF4444) else Color(0xFF0284C7))
-            .pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    if (hasMic() && recorder.start()) {
-                        recording = true
-                        tryAwaitRelease()
-                        recording = false
-                        recorder.stop()?.let(onRecorded)
-                    }
-                })
-            },
-        contentAlignment = Alignment.Center,
-    ) { Text(if (recording) "⏹️" else "🎙️", fontSize = 38.sp) }
-}
+
 
 /** Plays voice / video / GIF. Encrypted media is downloaded and decrypted first (rememberMedia). */
 @Composable

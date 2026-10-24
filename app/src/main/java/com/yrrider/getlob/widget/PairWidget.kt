@@ -66,10 +66,13 @@ class PairWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val state = LocalStore.read(context)
-        val settings = LocalStore.readSettings(context)
-        val theme = WidgetThemes.theme(context)
-        provideContent { WidgetContent(state, settings, theme) }
+        provideContent {
+            val ctx = LocalContext.current
+            val state = LocalStore.read(ctx)
+            val settings = LocalStore.readSettings(ctx)
+            val theme = WidgetThemes.theme(ctx)
+            WidgetContent(state, settings, theme)
+        }
     }
 }
 
@@ -93,7 +96,7 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
     val animated = (s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) && s.frameCount > 1
 
     // Decode still image (suppressed during SOS so emergency alert is not obscured)
-    val still: Bitmap? = remember(s.updatedAt, wPx, hPx, s.fitCrop, s.kind) {
+    val still: Bitmap? = remember(s.updatedAt, s.posterPath, wPx, hPx, s.fitCrop, s.kind) {
         if (!animated && s.posterPath.isNotEmpty() && s.kind != MsgType.SOS) ImageFit.decode(s.posterPath, wPx, hPx, s.fitCrop) else null
     }
     // Animated flipper

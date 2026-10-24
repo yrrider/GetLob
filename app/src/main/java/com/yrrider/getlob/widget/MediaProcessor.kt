@@ -8,6 +8,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Movie
 import android.media.MediaMetadataRetriever
+import android.util.Log
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
 import com.yrrider.getlob.data.LocalStore
 import com.yrrider.getlob.data.Message
@@ -33,47 +35,70 @@ object MediaProcessor {
     private const val FRAME_PX = 360          // frames are small on purpose (widget memory limit)
     private const val POSTER_PX = 720
 
-    suspend fun apply(ctx: Context, m: Message) = withContext(Dispatchers.IO) {
+    suspend fun apply(ctx: Context, m: Message, localFile: File? = null) = withContext(Dispatchers.IO) {
+        Log.d("MediaProcessor", "apply message type=${m.type}, text=${m.text}, localFile=${localFile?.name}")
         val old = LocalStore.read(ctx)
         val next: WidgetState? = when (m.type) {
-            MsgType.TEXT, MsgType.EMOJI ->
-                clear(ctx).let { WidgetState(kind = m.type, text = m.text) }
+            MsgType.TEXT, MsgType.EMOJI -> {
+                clear(ctx)
+                WidgetState(kind = m.type, text = m.text, posterPath = "", frameCount = 0)
+            }
 
             MsgType.IMAGE -> {
-                val f = runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                val f = localFile?.takeIf { it.exists() && it.length() > 0 }
+                    ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
                 if (f != null && f.exists() && f.length() > 0) {
                     clear(ctx)
                     writePoster(ctx, f.absolutePath)
-                    WidgetState(kind = MsgType.IMAGE, text = m.text, posterPath = LocalStore.posterFile(ctx).absolutePath, mediaUrl = m.mediaUrl)
-                } else null
+                    WidgetState(
+                        kind = MsgType.IMAGE,
+                        text = m.text,
+                        posterPath = LocalStore.posterFile(ctx).absolutePath,
+                        mediaUrl = m.mediaUrl
+                    )
+                } else {
+                    Log.e("MediaProcessor", "Failed to get image file for mediaUrl: ${m.mediaUrl}")
+                    null
+                }
             }
 
             MsgType.GIF -> {
-                val f = runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                val f = localFile?.takeIf { it.exists() && it.length() > 0 }
+                    ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
                 if (f != null && f.exists() && f.length() > 0) {
                     clear(ctx)
                     val n = extractGifFrames(ctx, f)
-                    WidgetState(kind = MsgType.GIF, text = m.text, posterPath = LocalStore.frameFile(ctx, 0).absolutePath, frameCount = n, mediaUrl = m.mediaUrl)
+                    WidgetState(
+                        kind = MsgType.GIF,
+                        text = m.text,
+                        posterPath = LocalStore.frameFile(ctx, 0).absolutePath,
+                        frameCount = n,
+                        mediaUrl = m.mediaUrl
+                    )
                 } else null
             }
 
             MsgType.VIDEO -> {
-                val f = runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                val f = localFile?.takeIf { it.exists() && it.length() > 0 }
+                    ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
                 if (f != null && f.exists() && f.length() > 0) {
                     clear(ctx)
                     val n = extractVideoFrames(ctx, f)
-                    WidgetState(kind = MsgType.VIDEO, text = m.text, posterPath = LocalStore.posterFile(ctx).absolutePath, frameCount = n, mediaUrl = m.mediaUrl)
+                    WidgetState(
+                        kind = MsgType.VIDEO,
+                        text = m.text,
+                        posterPath = LocalStore.posterFile(ctx).absolutePath,
+                        frameCount = n,
+                        mediaUrl = m.mediaUrl
+                    )
                 } else null
             }
-
-            MsgType.VOICE, MsgType.PTT ->
-                WidgetState(kind = MsgType.VOICE, text = "\uD83C\uDF99 New voice message", mediaUrl = m.mediaUrl)
 
             MsgType.SOS -> {
                 clear(ctx)
                 WidgetState(kind = MsgType.SOS, text = "🚨 SOS ALERT")
             }
-            MsgType.GAME -> old.copy(kind = MsgType.GAME, text = m.text.ifEmpty { "\uD83C\uDFAE Your turn!" })
+            MsgType.GAME -> old.copy(kind = MsgType.GAME, text = m.text.ifEmpty { "🎮 Your turn!" })
             else -> null    // vibe etc. do not change the widget
         }
         if (next != null) {
@@ -83,6 +108,13 @@ object MediaProcessor {
     }
 
     suspend fun refresh(ctx: Context) {
+        runCatching {
+            val manager = GlanceAppWidgetManager(ctx)
+            val glanceIds = manager.getGlanceIds(PairWidget::class.java)
+            glanceIds.forEach { id ->
+                PairWidget().update(ctx, id)
+            }
+        }
         runCatching { PairWidget().updateAll(ctx) }
         runCatching {
             val mgr = AppWidgetManager.getInstance(ctx)

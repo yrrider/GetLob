@@ -28,9 +28,9 @@ class PairMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val m = Message.fromFcm(message.data)
         Notifier.createChannels(this)
-        // FCM gives ~10-20 s of execution time; keep work bounded.
+        // FCM gives ~20-30 s of execution time; keep work bounded.
         runBlocking {
-            withTimeoutOrNull(12_000) { handle(applicationContext, m) }
+            withTimeoutOrNull(25_000) { handle(applicationContext, m) }
         }
     }
 
@@ -51,7 +51,11 @@ class PairMessagingService : FirebaseMessagingService() {
             Notifier.show(ctx, m)
 
             // 2. Process media and update widget in background
-            runCatching { MediaProcessor.apply(ctx, m) }
+            runCatching {
+                MediaProcessor.apply(ctx, m)
+            }.onFailure { e ->
+                android.util.Log.e("PairMessagingService", "MediaProcessor.apply error: ${e.message}", e)
+            }
         }
     }
 }

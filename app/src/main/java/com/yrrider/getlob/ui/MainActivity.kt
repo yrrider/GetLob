@@ -139,11 +139,11 @@ private fun App() {
 
     fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
 
-    suspend fun sendAndShow(m: Message) {
-        Repo.send(ctx, m)
+    suspend fun sendAndShow(m: Message, localFile: File? = null) {
         if (m.type in listOf(MsgType.TEXT, MsgType.EMOJI, MsgType.IMAGE, MsgType.GIF, MsgType.VIDEO)) {
-            runCatching { MediaProcessor.apply(ctx, m) }
+            runCatching { MediaProcessor.apply(ctx, m, localFile) }
         }
+        Repo.send(ctx, m)
     }
 
     fun executeSend(label: String, block: suspend () -> Unit) {
@@ -395,7 +395,8 @@ private fun App() {
                             }
 
                             val url = Repo.upload(ctx, finalFile, "jpg")
-                            sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = captionToSend))
+                            runCatching { finalFile.copyTo(SecureMedia.cacheFile(ctx, url), overwrite = true) }
+                            sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = captionToSend), localFile = finalFile)
                             if (finalFile != fileToSend) finalFile.delete()
                             if (fileToSend.name.startsWith("snap_")) fileToSend.delete()
                         }

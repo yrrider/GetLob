@@ -25,13 +25,21 @@ object SecureMedia {
             }
         }
     }
+    fun cacheFile(ctx: Context, url: String): File =
+        File(ctx.cacheDir, "dec_${url.substringBefore('?').hashCode()}")
+
     suspend fun fetch(ctx: Context, url: String): File = withContext(Dispatchers.IO) {
         purgeOldCache(ctx)
-        val out = File(ctx.cacheDir, "dec_${url.substringBefore('?').hashCode()}")
+        val out = cacheFile(ctx, url)
         if (out.exists() && out.length() > 0) return@withContext out
         val tmp = File(ctx.cacheDir, "dl_${System.nanoTime()}")
         try {
-            URL(url).openStream().use { i -> tmp.outputStream().use { i.copyTo(it) } }
+            val conn = (URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 12_000
+                readTimeout = 15_000
+                instanceFollowRedirects = true
+            }
+            conn.inputStream.use { i -> tmp.outputStream().use { i.copyTo(it) } }
             Crypto.decryptOrCopy(ctx, url, tmp, out)
         } catch (e: Exception) {
             out.delete(); throw e

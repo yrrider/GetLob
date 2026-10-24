@@ -2,7 +2,9 @@ package com.yrrider.getlob.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Context
 import android.os.Bundle
+import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -57,13 +59,43 @@ import kotlinx.coroutines.tasks.await
 class LiveTalkActivity : ComponentActivity() {
     companion object { const val ACTION_OPEN_LIVE = "com.yrrider.getlob.OPEN_LIVE" }
 
+    private var proximityWakeLock: PowerManager.WakeLock? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (powerManager != null && powerManager.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+            proximityWakeLock = powerManager.newWakeLock(
+                PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                "getlob:LiveTalkProximity"
+            )
+        }
         val sendAlert = intent.action != ACTION_OPEN_LIVE
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Color.Black, surface = Color(0xFF0D0D0D))) {
+            MaterialTheme(colorScheme = darkColorScheme(background = Color.Black, surface = Color(0xFF0A0A0A))) {
                 LiveScreen(sendAlert) { finish() }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (proximityWakeLock?.isHeld == false) {
+            runCatching { proximityWakeLock?.acquire(2 * 60 * 60 * 1000L) }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (proximityWakeLock?.isHeld == true) {
+            runCatching { proximityWakeLock?.release() }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (proximityWakeLock?.isHeld == true) {
+            runCatching { proximityWakeLock?.release() }
         }
     }
 }
