@@ -42,6 +42,17 @@ val BORDER_COLORS = listOf(
     0x00000000L to "None",
 )
 
+val BG_COLORS = listOf(
+    0xFF000000L to "Pitch Black",
+    0xFF18181BL to "Charcoal",
+    0xFF0F172AL to "Midnight",
+    0xFF1E293BL to "Slate",
+    0xFF2E1065L to "Violet",
+    0xFF4C0519L to "Wine",
+    0xFF022C22L to "Forest",
+    0xFFFFFFFFL to "Pure White",
+)
+
 val FONT_COLORS = listOf(
     0xFFFFFFFFL to "Pure White",
     0xFFFDE047L to "Sun Gold",
@@ -121,18 +132,19 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
         )
 
         // Live Frosted Glass Preview
+        val effectiveBg = if (s.bgColor != 0L) s.bgColor else theme.bg
         val previewBg = if (s.glassEffect) {
             Brush.verticalGradient(
                 listOf(
-                    Color(theme.bg).copy(alpha = (transparency * 1.3f).coerceIn(0f, 1f)),
-                    Color(theme.bg).copy(alpha = (transparency * 0.7f).coerceIn(0f, 1f))
+                    Color(effectiveBg).copy(alpha = (transparency * 1.3f).coerceIn(0f, 1f)),
+                    Color(effectiveBg).copy(alpha = (transparency * 0.7f).coerceIn(0f, 1f))
                 )
             )
         } else {
             Brush.linearGradient(
                 listOf(
-                    Color(theme.bg).copy(alpha = transparency),
-                    Color(theme.bg).copy(alpha = transparency)
+                    Color(effectiveBg).copy(alpha = transparency),
+                    Color(effectiveBg).copy(alpha = transparency)
                 )
             )
         }
@@ -163,6 +175,34 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
                     color = Color(s.fontColor).copy(alpha = 0.8f),
                     fontSize = 12.sp
                 )
+            }
+        }
+
+        // Widget Background Colour Picker
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp)
+        ) {
+            Text("Widget Background Colour", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BG_COLORS.forEach { (colorLong, _) ->
+                    Box(
+                        Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color(colorLong))
+                            .border(
+                                2.dp,
+                                if (s.bgColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
+                                CircleShape
+                            )
+                            .clickable { s = s.copy(bgColor = colorLong) }
+                    )
+                }
             }
         }
 

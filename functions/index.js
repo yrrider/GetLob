@@ -150,12 +150,16 @@ exports.onMessageCreated = onDocumentCreated("pairs/{pairId}/messages/{msgId}", 
     createdAt: String(createdAt),
   };
   // Data-only + high priority: wakes the app so it can update the widget and vibrate.
-  const urgent = ["sos", "ptt", "vibe"].includes(data.type);
+  const urgent = ["sos", "ptt", "vibe", "live"].includes(data.type);
   try {
     await admin.messaging().send({
       token,
       data,
-      android: { priority: "high", ttl: urgent ? 60 * 1000 : 24 * 3600 * 1000 },
+      android: {
+        priority: "high",
+        directBootOk: true,
+        ttl: urgent ? 60 * 1000 : 24 * 3600 * 1000,
+      },
     });
   } catch (e) {
     if (e.code === "messaging/registration-token-not-registered") {

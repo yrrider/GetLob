@@ -370,8 +370,9 @@ private fun App() {
 
                         executeSend("Snap") {
                             val finalFile = withContext(Dispatchers.IO) {
+                                val optimized = ImageFit.compressForUpload(ctx, fileToSend, maxDim = 1080, quality = 82)
                                 if (captionToSend.isNotEmpty()) {
-                                    val originalBmp = BitmapFactory.decodeFile(fileToSend.absolutePath)
+                                    val originalBmp = BitmapFactory.decodeFile(optimized.absolutePath)
                                     if (originalBmp != null) {
                                         val stamped = WidgetRenderer.overlayTextOnBitmap(
                                             originalBmp,
@@ -381,11 +382,12 @@ private fun App() {
                                         )
                                         val out = File(ctx.cacheDir, "snap_${System.currentTimeMillis()}.jpg")
                                         FileOutputStream(out).use {
-                                            stamped.compress(Bitmap.CompressFormat.JPEG, 85, it)
+                                            stamped.compress(Bitmap.CompressFormat.JPEG, 82, it)
                                         }
+                                        if (optimized != fileToSend) optimized.delete()
                                         out
-                                    } else fileToSend
-                                } else fileToSend
+                                    } else optimized
+                                } else optimized
                             }
 
                             val url = Repo.upload(ctx, finalFile, "jpg")
@@ -810,15 +812,16 @@ private fun App() {
                             }
 
                             // Live Frosted Glass Preview
+                            val effectiveBgColor = if (widgetSettings.bgColor != 0L) widgetSettings.bgColor else currentTheme.bg
                             val previewBg = if (widgetSettings.glassEffect) {
                                 Brush.verticalGradient(
                                     listOf(
-                                        Color(currentTheme.bg).copy(alpha = (localTransparency * 1.3f).coerceIn(0f, 1f)),
-                                        Color(currentTheme.bg).copy(alpha = (localTransparency * 0.7f).coerceIn(0f, 1f))
+                                        Color(effectiveBgColor).copy(alpha = (localTransparency * 1.3f).coerceIn(0f, 1f)),
+                                        Color(effectiveBgColor).copy(alpha = (localTransparency * 0.7f).coerceIn(0f, 1f))
                                     )
                                 )
                             } else {
-                                Brush.linearGradient(listOf(Color(currentTheme.bg).copy(alpha = localTransparency), Color(currentTheme.bg).copy(alpha = localTransparency)))
+                                Brush.linearGradient(listOf(Color(effectiveBgColor).copy(alpha = localTransparency), Color(effectiveBgColor).copy(alpha = localTransparency)))
                             }
 
                             Box(
@@ -838,6 +841,28 @@ private fun App() {
                                     Text("Goodmorning beta", color = Color(widgetSettings.fontColor), fontSize = 17.sp, fontWeight = FontWeight.Medium)
                                     Spacer(Modifier.height(2.dp))
                                     Text("❤️ Love • ${widgetSettings.fontStyle} Style", color = Color(widgetSettings.fontColor).copy(alpha = 0.8f), fontSize = 12.sp)
+                                }
+                            }
+
+                            // Widget Background Colour Selector
+                            Column {
+                                Text("Widget Background Colour", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.height(6.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    BG_COLORS.forEach { (colorLong, _) ->
+                                        Box(
+                                            Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(colorLong))
+                                                .border(
+                                                    2.dp,
+                                                    if (widgetSettings.bgColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
+                                                    CircleShape
+                                                )
+                                                .clickable { updateSettings(widgetSettings.copy(bgColor = colorLong)) }
+                                        )
+                                    }
                                 }
                             }
 
@@ -1249,10 +1274,9 @@ private fun HistoryRow(m: Message, mine: Boolean, keyTick: Int) {
 }
 
 private fun downscaleToCache(ctx: Context, uri: Uri): File {
-    val src = File(ctx.cacheDir, "pick_src")
+    val src = File(ctx.cacheDir, "pick_src_${System.nanoTime()}")
     ctx.contentResolver.openInputStream(uri)!!.use { i -> FileOutputStream(src).use { i.copyTo(it) } }
-    val bmp = ImageFit.decode(src.absolutePath, 1280, 1280, crop = false) ?: return src
-    val out = File(ctx.cacheDir, "pick_${System.currentTimeMillis()}.jpg")
-    FileOutputStream(out).use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+    val out = ImageFit.compressForUpload(ctx, src, maxDim = 1080, quality = 82)
+    src.delete()
     return out
 }

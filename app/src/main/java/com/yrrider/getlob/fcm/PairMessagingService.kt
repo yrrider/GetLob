@@ -43,6 +43,8 @@ class PairMessagingService : FirebaseMessagingService() {
             } else if (m.type == MsgType.SOS) {
                 AudioAlerts.vibrate(ctx, isSos = true)
                 AudioAlerts.playSosSound(ctx)
+            } else if (m.type == MsgType.LIVE) {
+                AudioAlerts.vibrateLiveInvite(ctx)
             }
 
             runCatching { MediaProcessor.apply(ctx, m) }

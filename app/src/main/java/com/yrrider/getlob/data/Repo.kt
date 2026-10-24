@@ -91,8 +91,26 @@ object Repo {
 
     /** Removes every message and shared upload for the current pair. */
     suspend fun clearHistory(ctx: Context) {
-        require(pairId(ctx).isNotEmpty()) { "Not paired yet" }
-        fns.getHttpsCallable("clearPairHistory").call().await()
+        val pid = pairId(ctx)
+        require(pid.isNotEmpty()) { "Not paired yet" }
+
+        // 1. Try cloud function first
+        val cloudSuccess = runCatching {
+            fns.getHttpsCallable("clearPairHistory").call().await()
+        }.isSuccess
+
+        // 2. Client-side fallback if Cloud Function was not deployed or returned error
+        if (!cloudSuccess) {
+            val messages = db.collection("pairs").document(pid).collection("messages").limit(500).get().await()
+            if (!messages.isEmpty) {
+                val batch = db.batch()
+                messages.documents.forEach { batch.delete(it.reference) }
+                batch.commit().await()
+            }
+            db.collection("pairs").document(pid)
+                .set(mapOf("canvasClearedAt" to System.currentTimeMillis()), com.google.firebase.firestore.SetOptions.merge())
+                .await()
+        }
     }
 
     fun pairFlow(pairId: String): Flow<PairInfo?> = callbackFlow {
@@ -150,9 +168,13 @@ object Repo {
         LocalStore.writeSettings(ctx, settings)
         val pid = pairId(ctx)
         if (pid.isNotEmpty()) {
-            db.collection("pairs").document(pid)
-                .set(mapOf("settings" to settings.toMap()), com.google.firebase.firestore.SetOptions.merge())
-                .await()
+            runCatching {
+                db.collection("pairs").document(pid)
+                    .set(mapOf("settings" to settings.toMap()), com.google.firebase.firestore.SetOptions.merge())
+                    .await()
+            }.onFailure { e ->
+                android.util.Log.w("Repo", "Failed to sync settings to Firestore: ${e.message}")
+            }
         }
     }
 

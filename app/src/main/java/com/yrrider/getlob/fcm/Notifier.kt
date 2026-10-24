@@ -13,6 +13,7 @@ import com.yrrider.getlob.R
 import com.yrrider.getlob.data.LocalStore
 import com.yrrider.getlob.data.Message
 import com.yrrider.getlob.data.MsgType
+import com.yrrider.getlob.ui.LiveTalkActivity
 import com.yrrider.getlob.ui.OverlayActivity
 
 object Notifier {
@@ -49,6 +50,19 @@ object Notifier {
         )
     }
 
+    private fun liveTalkIntent(ctx: Context): PendingIntent {
+        val i = Intent(ctx, LiveTalkActivity::class.java).apply {
+            action = LiveTalkActivity.ACTION_OPEN_LIVE
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        return PendingIntent.getActivity(
+            ctx,
+            9999,
+            i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     private fun overlayIntent(ctx: Context, m: Message, sos: Boolean = false): PendingIntent {
         val i = Intent(ctx, OverlayActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -70,6 +84,7 @@ object Notifier {
         val partnerName = LocalStore.readSettings(ctx).partnerName.ifBlank { "Partner" }
 
         val (channel, title, body) = when (m.type) {
+            MsgType.LIVE -> Triple(CH_PTT, partnerName, "📡 Wants to talk! Tap to join Tap-to-Talk")
             MsgType.PTT -> Triple(CH_PTT, partnerName, "\uD83C\uDF99 Tap to talk: voice message")
             MsgType.VOICE -> Triple(CH_PTT, partnerName, "\uD83C\uDF99 Voice note (Tap to listen)")
             MsgType.SOS -> Triple(CH_SOS, "🚨 SOS from $partnerName", "$partnerName triggered an urgent emergency alert!")
@@ -93,6 +108,15 @@ object Notifier {
         if (m.type == MsgType.PTT || m.type == MsgType.VOICE) {
             b.addAction(android.R.drawable.ic_media_play, "Listen", overlayIntent(ctx, m))
             b.setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        }
+
+        if (m.type == MsgType.LIVE) {
+            b.setContentIntent(liveTalkIntent(ctx))
+            b.addAction(android.R.drawable.ic_btn_speak_now, "Join Talk 📡", liveTalkIntent(ctx))
+            b.setFullScreenIntent(liveTalkIntent(ctx), true)
+            b.setPriority(NotificationCompat.PRIORITY_MAX)
+            b.setCategory(NotificationCompat.CATEGORY_CALL)
+            b.setVibrate(longArrayOf(0, 300, 150, 300, 150, 500))
         }
 
         if (sos) {

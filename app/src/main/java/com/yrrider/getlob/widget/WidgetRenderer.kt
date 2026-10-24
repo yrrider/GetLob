@@ -75,7 +75,7 @@ object WidgetRenderer {
         val rect = RectF(inset, inset, wPx - inset, hPx - inset)
 
         val alphaInt = (settings.bgTransparency.coerceIn(0.05f, 1f) * 255).toInt()
-        val baseColor = theme.bg.toInt()
+        val baseColor = if (settings.bgColor != 0L) settings.bgColor.toInt() else theme.bg.toInt()
 
         if (settings.glassEffect) {
             // Glassmorphism effect: Frosted specular gradient fill

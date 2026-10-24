@@ -476,8 +476,9 @@ private fun OverlayRoot(
                                                 photoCaption = ""
                                                 job {
                                                     val finalFile = withContext(Dispatchers.IO) {
+                                                        val optimized = ImageFit.compressForUpload(ctx, fileToSend, maxDim = 1080, quality = 82)
                                                         if (caption.isNotEmpty()) {
-                                                            val originalBmp = BitmapFactory.decodeFile(fileToSend.absolutePath)
+                                                            val originalBmp = BitmapFactory.decodeFile(optimized.absolutePath)
                                                             if (originalBmp != null) {
                                                                 val currentSettings = LocalStore.readSettings(ctx)
                                                                 val stamped = WidgetRenderer.overlayTextOnBitmap(
@@ -488,11 +489,12 @@ private fun OverlayRoot(
                                                                 )
                                                                 val stampedFile = File(ctx.cacheDir, "snap_stamped_${System.currentTimeMillis()}.jpg")
                                                                 FileOutputStream(stampedFile).use { out ->
-                                                                    stamped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                                                                    stamped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, out)
                                                                 }
+                                                                if (optimized != fileToSend) optimized.delete()
                                                                 stampedFile
-                                                            } else fileToSend
-                                                        } else fileToSend
+                                                            } else optimized
+                                                        } else optimized
                                                     }
                                                     val url = Repo.upload(ctx, finalFile, "jpg")
                                                     sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = caption))
@@ -758,10 +760,9 @@ private fun PlayPanel(url: String, kind: String, onBack: () -> Unit) {
 
 /** Copies a picked image to cache and downsizes it so uploads are fast and widget-friendly. */
 private fun downscaleToCache(ctx: Context, uri: Uri): File {
-    val src = File(ctx.cacheDir, "pick_src")
+    val src = File(ctx.cacheDir, "pick_src_${System.nanoTime()}")
     ctx.contentResolver.openInputStream(uri)!!.use { i -> FileOutputStream(src).use { i.copyTo(it) } }
-    val bmp = ImageFit.decode(src.absolutePath, 1280, 1280, crop = false) ?: return src
-    val out = File(ctx.cacheDir, "pick_${System.currentTimeMillis()}.jpg")
-    FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+    val out = ImageFit.compressForUpload(ctx, src, maxDim = 1080, quality = 82)
+    src.delete()
     return out
 }

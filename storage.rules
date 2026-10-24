@@ -7,7 +7,7 @@ service firebase.storage {
     }
 
     match /pairs/{pairId}/{allPaths=**} {
-      allow read: if isMember(pairId);
+      allow read, delete: if isMember(pairId);
       allow write: if isMember(pairId) && request.resource.size < 30 * 1024 * 1024;
     }
   }

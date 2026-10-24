@@ -1,6 +1,9 @@
 package com.yrrider.getlob.widget
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Movie
@@ -65,18 +68,31 @@ object MediaProcessor {
             else -> null    // vibe etc. do not change the widget
         }
         if (next != null) {
-            LocalStore.write(ctx, next)
-            PairWidget().updateAll(ctx)
+            LocalStore.write(ctx, next.copy(updatedAt = System.currentTimeMillis()))
+            refresh(ctx)
         }
     }
 
-    suspend fun refresh(ctx: Context) = PairWidget().updateAll(ctx)
+    suspend fun refresh(ctx: Context) {
+        runCatching { PairWidget().updateAll(ctx) }
+        runCatching {
+            val mgr = AppWidgetManager.getInstance(ctx)
+            val ids = mgr.getAppWidgetIds(ComponentName(ctx, PairWidgetReceiver::class.java))
+            if (ids.isNotEmpty()) {
+                val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE).apply {
+                    component = ComponentName(ctx, PairWidgetReceiver::class.java)
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+                }
+                ctx.sendBroadcast(intent)
+            }
+        }
+    }
 
     /** Clears the locally rendered canvas after the paired history is removed. */
     suspend fun clearCanvas(ctx: Context) = withContext(Dispatchers.IO) {
         clear(ctx)
-        LocalStore.write(ctx, WidgetState())
-        PairWidget().updateAll(ctx)
+        LocalStore.write(ctx, WidgetState(updatedAt = System.currentTimeMillis()))
+        refresh(ctx)
     }
 
     private fun clear(ctx: Context) {

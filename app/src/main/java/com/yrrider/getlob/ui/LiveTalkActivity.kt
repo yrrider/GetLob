@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -32,6 +33,9 @@ import com.yrrider.getlob.data.Repo
 import io.livekit.android.LiveKit
 import io.livekit.android.RoomOptions
 import io.livekit.android.e2ee.E2EEOptions
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -66,14 +70,16 @@ class LiveTalkActivity : ComponentActivity() {
 @Composable
 private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val liveKey = remember { LiveKey.get(ctx) }
     val room = remember {
         val e2ee = liveKey?.let { k -> E2EEOptions().also { it.keyProvider.setSharedKey(k) } }
         LiveKit.create(ctx.applicationContext, options = RoomOptions(e2eeOptions = e2ee))
     }
-    var status by remember { mutableStateOf("Connecting\u2026") }
+    var status by remember { mutableStateOf("Connecting to room\u2026") }
     var connected by remember { mutableStateOf(false) }
-    var talking by remember { mutableStateOf(false) }
+    var partnerJoined by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(false) }
 
     fun hasMic() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -81,18 +87,57 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
     LaunchedEffect(Unit) {
         if (!hasMic()) micPerm.launch(Manifest.permission.RECORD_AUDIO)
         try {
-            // Server verifies we belong to this pair and returns a short-lived room token.
             val res = FirebaseFunctions.getInstance().getHttpsCallable("getLiveToken").call().await().data as Map<*, *>
-            if (liveKey != null) room.e2eeManager?.enableE2EE(true)   // must be set before connecting
+            if (liveKey != null) room.e2eeManager?.enableE2EE(true)
             room.connect(res["url"] as String, res["token"] as String)
             connected = true
-            status = if (liveKey != null) "\uD83D\uDD12 Encrypted \u2014 hold to talk" else "\uD83D\uDD13 Not encrypted \u2014 hold to talk"
+            status = "Waiting for partner to join\u2026"
             if (sendAlert) Repo.send(ctx, Message(type = "live"))
         } catch (e: Exception) {
             status = "Could not connect: ${e.message}"
         }
     }
-    DisposableEffect(Unit) { onDispose { room.disconnect(); room.release() } }
+
+    LaunchedEffect(connected) {
+        if (connected) {
+            while (isActive) {
+                val hasPartner = room.remoteParticipants.isNotEmpty()
+                if (hasPartner != partnerJoined) {
+                    partnerJoined = hasPartner
+                    if (hasPartner) {
+                        status = "🟢 Partner Joined! (Live)"
+                        if (!isMuted && hasMic()) {
+                            runCatching { room.localParticipant.setMicrophoneEnabled(true) }
+                        }
+                    } else {
+                        status = "Waiting for partner to join\u2026"
+                        runCatching { room.localParticipant.setMicrophoneEnabled(false) }
+                    }
+                }
+                delay(600)
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            room.disconnect()
+            room.release()
+        }
+    }
+
+    fun toggleMute() {
+        if (!connected || !partnerJoined) return
+        if (!hasMic()) {
+            micPerm.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        val nextMute = !isMuted
+        isMuted = nextMute
+        scope.launch {
+            runCatching { room.localParticipant.setMicrophoneEnabled(!nextMute) }
+        }
+    }
 
     val none = remember { MutableInteractionSource() }
     Box(
@@ -107,27 +152,58 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
         ) {
             Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("\uD83D\uDCE1 Live talk", fontSize = 18.sp)
-                Text(status, fontSize = 13.sp)
-                Spacer(Modifier.height(16.dp))
+                Text("📡 Tap to Talk", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = status,
+                    fontSize = 14.sp,
+                    fontWeight = if (partnerJoined) FontWeight.Bold else FontWeight.Normal,
+                    color = when {
+                        !connected -> Color(0xFF94A3B8)
+                        partnerJoined -> Color(0xFF10B981)
+                        else -> Color(0xFFFBBF24)
+                    }
+                )
+                if (connected && !partnerJoined) {
+                    Text("Invitation & vibrations sent to partner 📡", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                } else if (connected && partnerJoined) {
+                    Text(if (isMuted) "Microphone muted (Tap to speak)" else "Broadcasting your voice live (Tap to mute)", fontSize = 11.sp, color = Color(0xFFCBD5E1))
+                }
+                Spacer(Modifier.height(18.dp))
+
+                val buttonBg = when {
+                    !connected -> Color(0xFF27272A)
+                    !partnerJoined -> Color(0xFFB45309)
+                    isMuted -> Color(0xFFDC2626)
+                    else -> Color(0xFF059669)
+                }
+
                 Box(
-                    Modifier.size(128.dp).clip(CircleShape)
-                        .background(if (talking) Color(0xFFD32F2F) else if (connected) Color(0xFF4F6BED) else Color(0xFF555566))
-                        .pointerInput(connected) {
-                            detectTapGestures(onPress = {
-                                if (connected && hasMic()) {
-                                    talking = true
-                                    runCatching { room.localParticipant.setMicrophoneEnabled(true) }
-                                    tryAwaitRelease()
-                                    talking = false
-                                    runCatching { room.localParticipant.setMicrophoneEnabled(false) }
-                                }
-                            })
-                        },
+                    Modifier
+                        .size(128.dp)
+                        .clip(CircleShape)
+                        .background(buttonBg)
+                        .clickable(enabled = connected && partnerJoined) { toggleMute() },
                     contentAlignment = Alignment.Center,
-                ) { Text(if (talking) "\uD83D\uDD34" else "\uD83C\uDF99", fontSize = 44.sp) }
-                Spacer(Modifier.height(12.dp))
-                TextButton(close) { Text("Leave") }
+                ) {
+                    Text(
+                        text = when {
+                            !connected -> "⏳"
+                            !partnerJoined -> "📡"
+                            isMuted -> "🔇"
+                            else -> "🎤"
+                        },
+                        fontSize = 44.sp
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                OutlinedButton(
+                    onClick = close,
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x40FFFFFF))
+                ) {
+                    Text("Leave", color = Color.White)
+                }
             }
         }
     }

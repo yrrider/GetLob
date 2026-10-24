@@ -11,6 +11,7 @@ object MsgType {
     const val VIDEO = "video"
     const val VOICE = "voice"
     const val PTT = "ptt"      // push-to-talk clip: triggers a "Tap to listen" notification
+    const val LIVE = "live"    // tap to talk live invitation
     const val VIBE = "vibe"
     const val SOS = "sos"
     const val GAME = "game"    // "your turn" ping

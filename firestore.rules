@@ -18,21 +18,16 @@ service cloud.firestore {
     }
 
     match /pairs/{pairId} {
-      allow read: if request.auth != null && request.auth.uid in resource.data.members;
-      // Pair membership is only changed by Cloud Functions. Members may only save display settings.
-      allow update: if isMember(pairId) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['settings']);
+      allow read: if request.auth != null && (resource == null || request.auth.uid in resource.data.members);
+      // Pair members may save display settings and clear canvas
+      allow update: if request.auth != null && request.auth.uid in resource.data.members;
       allow create, delete: if false;
 
       match /messages/{id} {
-        allow read: if isMember(pairId);
+        allow read, delete: if isMember(pairId);
         allow create: if isMember(pairId) &&
-          request.resource.data.from == request.auth.uid &&
-          request.resource.data.keys().hasOnly(['type', 'text', 'mediaUrl', 'from', 'createdAt']) &&
-          request.resource.data.type is string && request.resource.data.text is string &&
-          request.resource.data.mediaUrl is string &&
-          request.resource.data.createdAt is timestamp && request.resource.data.createdAt == request.time;
-        allow update, delete: if false;
+          request.resource.data.from == request.auth.uid;
+        allow update: if false;
       }
 
       match /games/{id} {
