@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.glance.appwidget.updateAll
 import coil.compose.AsyncImage
 import com.google.firebase.messaging.FirebaseMessaging
@@ -64,16 +66,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
-                    primary = Color(0xFF38BDF8),
+                    primary = Color(0xFFFFFFFF),
                     secondary = Color(0xFFF43F5E),
-                    background = Color(0xFF0F172A),
-                    surface = Color(0xFF1E293B),
-                    surfaceVariant = Color(0xFF334155),
-                    onBackground = Color(0xFFF8FAFC),
-                    onSurface = Color(0xFFF8FAFC),
+                    background = Color(0xFF000000),
+                    surface = Color(0xFF0D0D0D),
+                    surfaceVariant = Color(0xFF171717),
+                    onBackground = Color(0xFFFFFFFF),
+                    onSurface = Color(0xFFFFFFFF),
                 )
             ) {
-                Surface(color = MaterialTheme.colorScheme.background) {
+                Surface(color = Color(0xFF000000)) {
                     App()
                 }
             }
@@ -111,6 +113,11 @@ private fun App() {
     var messageText by remember { mutableStateOf("") }
     var selectedMood by remember { mutableStateOf("") }
 
+    // Instant Snap & Text over image state
+    var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
+    var photoCaption by remember { mutableStateOf("") }
+    var cameraTempFile by remember { mutableStateOf<File?>(null) }
+
     // End-to-end encryption state
     var keyTick by remember { mutableIntStateOf(0) }
     var passphrase by remember { mutableStateOf("") }
@@ -142,13 +149,34 @@ private fun App() {
         }
     }
 
+    // Camera Launcher for Instant Snap
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        if (ok && cameraTempFile != null && cameraTempFile!!.exists() && cameraTempFile!!.length() > 0) {
+            pendingPhotoFile = cameraTempFile
+        }
+    }
+
+    val cameraPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) {
+            val f = File(ctx.cacheDir, "snap_${System.currentTimeMillis()}.jpg")
+            cameraTempFile = f
+            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.provider", f)
+            cameraLauncher.launch(uri)
+        } else {
+            toast("Camera permission needed to snap photos")
+        }
+    }
+
+    fun launchCameraSnap() {
+        cameraPerm.launch(Manifest.permission.CAMERA)
+    }
+
     // Media Pickers
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
-            executeSend("Photo") {
+            scope.launch {
                 val small = withContext(Dispatchers.IO) { downscaleToCache(ctx, uri) }
-                val url = Repo.upload(ctx, small, "jpg")
-                sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url))
+                pendingPhotoFile = small
             }
         }
     }
@@ -214,6 +242,10 @@ private fun App() {
     var widgetSettings by remember { mutableStateOf(LocalStore.readSettings(ctx)) }
     var partnerNameInput by remember { mutableStateOf(widgetSettings.partnerName) }
 
+    // Smooth local slider states to avoid IPC / Network flood crashes
+    var localTransparency by remember(widgetSettings.bgTransparency) { mutableFloatStateOf(widgetSettings.bgTransparency) }
+    var localCorner by remember(widgetSettings.cornerDp) { mutableFloatStateOf(widgetSettings.cornerDp.toFloat()) }
+
     val syncedSettings by remember(pairId) {
         if (pairId.isNotEmpty()) Repo.settingsFlow(pairId) else flowOf(null)
     }.collectAsState(initial = null)
@@ -223,6 +255,8 @@ private fun App() {
             if (newS != widgetSettings) {
                 widgetSettings = newS
                 partnerNameInput = newS.partnerName
+                localTransparency = newS.bgTransparency
+                localCorner = newS.cornerDp.toFloat()
                 LocalStore.writeSettings(ctx, newS)
                 PairWidget().updateAll(ctx)
             }
@@ -233,9 +267,107 @@ private fun App() {
         widgetSettings = newS
         LocalStore.writeSettings(ctx, newS)
         scope.launch {
-            Repo.saveSettings(ctx, newS)
-            PairWidget().updateAll(ctx)
+            runCatching {
+                Repo.saveSettings(ctx, newS)
+                PairWidget().updateAll(ctx)
+            }
         }
+    }
+
+    // Snapchat-Style Text-Over-Image Caption Dialog
+    if (pendingPhotoFile != null) {
+        AlertDialog(
+            onDismissRequest = { pendingPhotoFile = null; photoCaption = "" },
+            containerColor = Color(0xFF0F0F0F),
+            title = { Text("Snap Preview & Text", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(230.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = pendingPhotoFile,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        if (photoCaption.isNotEmpty()) {
+                            Surface(
+                                color = Color(0x99000000),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                Text(
+                                    text = photoCaption,
+                                    color = Color(widgetSettings.fontColor),
+                                    textAlign = TextAlign.Center,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = photoCaption,
+                        onValueChange = { photoCaption = it.take(100) },
+                        placeholder = { Text("Add text over image (Snapchat style)…", fontSize = 13.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val fileToSend = pendingPhotoFile!!
+                        val captionToSend = photoCaption.trim()
+                        pendingPhotoFile = null
+                        photoCaption = ""
+
+                        executeSend("Snap") {
+                            val finalFile = withContext(Dispatchers.IO) {
+                                if (captionToSend.isNotEmpty()) {
+                                    val originalBmp = BitmapFactory.decodeFile(fileToSend.absolutePath)
+                                    if (originalBmp != null) {
+                                        val stamped = WidgetRenderer.overlayTextOnBitmap(
+                                            originalBmp,
+                                            captionToSend,
+                                            widgetSettings.fontStyle,
+                                            widgetSettings.fontColor.toInt()
+                                        )
+                                        val out = File(ctx.cacheDir, "snap_${System.currentTimeMillis()}.jpg")
+                                        FileOutputStream(out).use {
+                                            stamped.compress(Bitmap.CompressFormat.JPEG, 85, it)
+                                        }
+                                        out
+                                    } else fileToSend
+                                } else fileToSend
+                            }
+
+                            val url = Repo.upload(ctx, finalFile, "jpg")
+                            sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = captionToSend))
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color(0xFF000000)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Send Snap 🚀", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPhotoFile = null; photoCaption = "" }) {
+                    Text("Cancel", color = Color(0xFF94A3B8))
+                }
+            }
+        )
     }
 
     Column(
@@ -290,9 +422,10 @@ private fun App() {
                         )
                     },
                     colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = Color(0xFF0284C7),
+                        containerColor = Color(0xFF141414),
                         contentColor = Color.White
                     ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262626)),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text("📡 Tap to Talk", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -349,9 +482,9 @@ private fun App() {
                     if (inviteCode.isNotEmpty() || (pairInfo?.code?.isNotEmpty() == true)) {
                         val activeCode = (pairInfo?.code?.ifEmpty { null }) ?: inviteCode
                         Surface(
-                            color = Color(0xFF0F172A),
+                            color = Color(0xFF0F0F0F),
                             shape = RoundedCornerShape(12.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262626)),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
                         ) {
                             Column(
@@ -401,13 +534,13 @@ private fun App() {
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color.Black)
                         ) {
-                            Text("Create a Pair Code")
+                            Text("Create a Pair Code", fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(Modifier.height(16.dp))
-                        HorizontalDivider(color = Color(0xFF334155))
+                        HorizontalDivider(color = Color(0xFF262626))
                         Spacer(Modifier.height(16.dp))
 
                         Text("Or enter your partner's code:", style = MaterialTheme.typography.bodyMedium, color = Color.White)
@@ -440,17 +573,18 @@ private fun App() {
                 }
             }
         } else {
-            // Main Connected Hub (Both Phones Successfully Paired)
+            // Main Connected Hub
             LazyColumn(
                 Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Widget Actions Card (Add Photo, GIF, Video, Text, Mood)
+                // Widget Actions Card (Snapchat Snap, Photo, GIF, Video, Vibe)
                 item {
                     Card(
                         Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1C1C1C))
                     ) {
                         Column(Modifier.padding(16.dp)) {
                             Row(
@@ -469,7 +603,7 @@ private fun App() {
                             }
                             Spacer(Modifier.height(12.dp))
 
-                            // Quick Media Action Buttons (Image, GIF, Video, Vibe)
+                            // 5 Quick Actions: Snap Camera, Gallery Photo, GIF, Video, Vibe
                             Row(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -477,7 +611,14 @@ private fun App() {
                                 ActionTile(
                                     modifier = Modifier.weight(1f),
                                     icon = "📸",
-                                    label = "Image",
+                                    label = "Snap",
+                                    color = Color(0xFFFBBF24),
+                                    onClick = { launchCameraSnap() }
+                                )
+                                ActionTile(
+                                    modifier = Modifier.weight(1f),
+                                    icon = "🖼️",
+                                    label = "Photo",
                                     color = Color(0xFF0284C7),
                                     onClick = {
                                         imagePicker.launch(
@@ -532,7 +673,7 @@ private fun App() {
                                         onClick = {
                                             selectedMood = emoji
                                             executeSend("Mood") {
-                                                sendAndShow(Message(type = MsgType.EMOJI, text = emoji))
+                                                sendAndShow(Message(type = MsgType.EMOJI, text = "$emoji $label"))
                                             }
                                         },
                                         label = { Text("$emoji $label", fontSize = 12.sp) }
@@ -567,9 +708,9 @@ private fun App() {
                                     },
                                     enabled = messageText.isNotBlank() && !busySending,
                                     shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8))
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color.Black)
                                 ) {
-                                    Text("Post")
+                                    Text("Post", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -582,7 +723,8 @@ private fun App() {
                     Card(
                         Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1C1C1C))
                     ) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(
@@ -619,9 +761,9 @@ private fun App() {
                                             toast("Partner name saved & synced!")
                                         },
                                         shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8))
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color.Black)
                                     ) {
-                                        Text("Save")
+                                        Text("Save", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -630,24 +772,24 @@ private fun App() {
                             val previewBg = if (widgetSettings.glassEffect) {
                                 Brush.verticalGradient(
                                     listOf(
-                                        Color(currentTheme.bg).copy(alpha = (widgetSettings.bgTransparency * 1.3f).coerceIn(0f, 1f)),
-                                        Color(currentTheme.bg).copy(alpha = (widgetSettings.bgTransparency * 0.7f).coerceIn(0f, 1f))
+                                        Color(currentTheme.bg).copy(alpha = (localTransparency * 1.3f).coerceIn(0f, 1f)),
+                                        Color(currentTheme.bg).copy(alpha = (localTransparency * 0.7f).coerceIn(0f, 1f))
                                     )
                                 )
                             } else {
-                                Brush.linearGradient(listOf(Color(currentTheme.bg).copy(alpha = widgetSettings.bgTransparency), Color(currentTheme.bg).copy(alpha = widgetSettings.bgTransparency)))
+                                Brush.linearGradient(listOf(Color(currentTheme.bg).copy(alpha = localTransparency), Color(currentTheme.bg).copy(alpha = localTransparency)))
                             }
 
                             Box(
                                 Modifier
                                     .fillMaxWidth()
                                     .height(110.dp)
-                                    .clip(RoundedCornerShape(widgetSettings.cornerDp.dp))
+                                    .clip(RoundedCornerShape(localCorner.dp))
                                     .background(previewBg)
                                     .border(
                                         width = (if (widgetSettings.borderWidthDp > 0) widgetSettings.borderWidthDp else 0f).dp,
                                         color = Color(widgetSettings.borderColor),
-                                        shape = RoundedCornerShape(widgetSettings.cornerDp.dp)
+                                        shape = RoundedCornerShape(localCorner.dp)
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -674,12 +816,15 @@ private fun App() {
                                 )
                             }
 
-                            // Transparency Slider
+                            // Transparency Slider (Smooth sliding, updates on release)
                             Column {
-                                Text("Transparency: ${(widgetSettings.bgTransparency * 100).toInt()}%", fontSize = 13.sp, color = Color.White)
+                                Text("Transparency: ${(localTransparency * 100).toInt()}%", fontSize = 13.sp, color = Color.White)
                                 Slider(
-                                    value = widgetSettings.bgTransparency,
-                                    onValueChange = { updateSettings(widgetSettings.copy(bgTransparency = it)) },
+                                    value = localTransparency,
+                                    onValueChange = { localTransparency = it },
+                                    onValueChangeFinished = {
+                                        updateSettings(widgetSettings.copy(bgTransparency = localTransparency))
+                                    },
                                     valueRange = 0.05f..1.0f
                                 )
                             }
@@ -731,7 +876,7 @@ private fun App() {
                                             Modifier
                                                 .size(32.dp)
                                                 .clip(CircleShape)
-                                                .background(if (colorLong == 0L) Color(0xFF334155) else Color(colorLong))
+                                                .background(if (colorLong == 0L) Color(0xFF262626) else Color(colorLong))
                                                 .border(
                                                     2.dp,
                                                     if (widgetSettings.borderColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
@@ -741,6 +886,19 @@ private fun App() {
                                         )
                                     }
                                 }
+                            }
+
+                            // Corner Roundness Slider
+                            Column {
+                                Text("Corner Roundness: ${localCorner.toInt()} dp", fontSize = 13.sp, color = Color.White)
+                                Slider(
+                                    value = localCorner,
+                                    onValueChange = { localCorner = it },
+                                    onValueChangeFinished = {
+                                        updateSettings(widgetSettings.copy(cornerDp = localCorner.toInt()))
+                                    },
+                                    valueRange = 8f..36f
+                                )
                             }
 
                             // Image Fit / Crop switch
@@ -801,7 +959,8 @@ private fun App() {
                     Card(
                         Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1C1C1C))
                     ) {
                         Column(Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -912,18 +1071,18 @@ private fun ActionTile(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onClick),
-        color = color.copy(alpha = 0.15f),
+        color = Color(0xFF141414),
         shape = RoundedCornerShape(14.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.35f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.4f))
     ) {
         Column(
-            Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+            Modifier.padding(vertical = 12.dp, horizontal = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Text(icon, fontSize = 24.sp)
             Spacer(Modifier.height(4.dp))
-            Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
         }
     }
 }
@@ -946,8 +1105,9 @@ private fun HistoryRow(m: Message, mine: Boolean, keyTick: Int) {
             },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (mine) Color(0xFF1E293B) else Color(0xFF1E1B4B)
-        )
+            containerColor = if (mine) Color(0xFF121212) else Color(0xFF1A1A1A)
+        ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262626))
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(

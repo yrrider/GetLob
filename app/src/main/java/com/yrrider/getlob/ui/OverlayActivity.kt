@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.media.MediaPlayer
 import android.net.Uri
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.GifDecoder
@@ -59,6 +61,8 @@ import com.yrrider.getlob.data.rememberMedia
 import com.yrrider.getlob.fcm.AudioAlerts
 import com.yrrider.getlob.widget.ImageFit
 import com.yrrider.getlob.widget.MediaProcessor
+import com.yrrider.getlob.data.WidgetSettings
+import com.yrrider.getlob.widget.WidgetRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,7 +108,14 @@ class OverlayActivity : ComponentActivity() {
         val widgetBounds = intent.sourceBounds
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    background = Color.Black,
+                    surface = Color(0xFF0D0D0D),
+                    onBackground = Color.White,
+                    onSurface = Color.White
+                )
+            ) {
                 OverlayRoot(url, kind, sos, widgetBounds) {
                     AudioAlerts.stopSosSound()
                     finish()
@@ -125,7 +136,7 @@ class OverlayActivity : ComponentActivity() {
     }
 }
 
-private enum class Mode { MENU, MEDIA_CHOOSER, TEXT, VOICE, PTT, GAME, PLAY, ALERT, CONFIRM_SOS }
+private enum class Mode { MENU, MEDIA_CHOOSER, CAPTION, TEXT, VOICE, PTT, GAME, PLAY, ALERT, CONFIRM_SOS }
 
 private val EMOJIS = listOf(
     "❤️" to "Love",
@@ -193,10 +204,39 @@ private fun OverlayRoot(
         }
     }
 
+    var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
+    var photoCaption by remember { mutableStateOf("") }
+    var cameraTempFile by remember { mutableStateOf<File?>(null) }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        if (ok && cameraTempFile != null && cameraTempFile!!.exists() && cameraTempFile!!.length() > 0) {
+            pendingPhotoFile = cameraTempFile
+            mode = Mode.CAPTION
+        }
+    }
+
+    val cameraPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) {
+            val f = File(ctx.cacheDir, "snap_${System.currentTimeMillis()}.jpg")
+            cameraTempFile = f
+            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.provider", f)
+            cameraLauncher.launch(uri)
+        } else {
+            toast("Camera permission needed to snap photos")
+        }
+    }
+
+    fun launchCameraSnap() {
+        cameraPerm.launch(Manifest.permission.CAMERA)
+    }
+
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) job {
-            val small = withContext(Dispatchers.IO) { downscaleToCache(ctx, uri) }
-            sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = Repo.upload(ctx, small, "jpg")))
+        if (uri != null) {
+            scope.launch {
+                val small = withContext(Dispatchers.IO) { downscaleToCache(ctx, uri) }
+                pendingPhotoFile = small
+                mode = Mode.CAPTION
+            }
         }
     }
 
@@ -256,10 +296,10 @@ private fun OverlayRoot(
         ) {
             Surface(
                 shape = RoundedCornerShape(32.dp),
-                color = Color(0xEE1A1F2C),
+                color = Color(0xF5080808),
                 tonalElevation = 8.dp,
                 shadowElevation = 16.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x40FFFFFF)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
                 modifier = Modifier
                     .wrapContentWidth()
                     .animateContentSize()
@@ -278,24 +318,31 @@ private fun OverlayRoot(
                         // Google widget overlay style: Single horizontal row of colourful minimalistic round icons
                         Mode.MENU -> {
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // 1. Media: Image / Video / GIF
+                                // 1. Instant Camera Snap (Snapchat style)
+                                MinimalRoundIcon(
+                                    emoji = "📸",
+                                    gradient = listOf(Color(0xFFEC4899), Color(0xFFF43F5E)),
+                                    onClick = { launchCameraSnap() }
+                                )
+
+                                // 2. Media: Gallery Photo / Video / GIF
                                 MinimalRoundIcon(
                                     emoji = "🖼️",
-                                    gradient = listOf(Color(0xFF8B5CF6), Color(0xFFEC4899)),
+                                    gradient = listOf(Color(0xFF8B5CF6), Color(0xFFA855F7)),
                                     onClick = { mode = Mode.MEDIA_CHOOSER }
                                 )
 
-                                // 2. Text / Mood
+                                // 3. Text / Mood
                                 MinimalRoundIcon(
                                     emoji = "✍️",
                                     gradient = listOf(Color(0xFFF59E0B), Color(0xFFEF4444)),
                                     onClick = { mode = Mode.TEXT }
                                 )
 
-                                // 3. Tap to talk (Live Talk)
+                                // 4. Tap to talk (Live Talk)
                                 MinimalRoundIcon(
                                     emoji = "📡",
                                     gradient = listOf(Color(0xFF06B6D4), Color(0xFF3B82F6)),
@@ -309,7 +356,7 @@ private fun OverlayRoot(
                                     }
                                 )
 
-                                // 4. Vibe (Haptic pulse)
+                                // 5. Vibe (Haptic pulse)
                                 MinimalRoundIcon(
                                     emoji = "📳",
                                     gradient = listOf(Color(0xFF10B981), Color(0xFF059669)),
@@ -319,7 +366,7 @@ private fun OverlayRoot(
                                     }
                                 )
 
-                                // 5. SOS
+                                // 6. SOS
                                 MinimalRoundIcon(
                                     emoji = "🆘",
                                     gradient = listOf(Color(0xFFEF4444), Color(0xFFB91C1C)),
@@ -340,11 +387,14 @@ private fun OverlayRoot(
                             }
                         }
 
-                        // Submenu: Media Chooser (Photo, GIF, Video)
+                        // Submenu: Media Chooser (Snap, Gallery, GIF, Video)
                         Mode.MEDIA_CHOOSER -> {
                             Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    SubOption(icon = "📸", label = "Photo") {
+                                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    SubOption(icon = "📸", label = "Snap") {
+                                        launchCameraSnap()
+                                    }
+                                    SubOption(icon = "🖼️", label = "Photo") {
                                         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                     }
                                     SubOption(icon = "🎞️", label = "GIF") {
@@ -356,6 +406,107 @@ private fun OverlayRoot(
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 TextButton({ mode = Mode.MENU }) { Text("Back", color = Color(0xFF94A3B8)) }
+                            }
+                        }
+
+                        // Snapchat-style photo preview with text overlay
+                        Mode.CAPTION -> {
+                            val file = pendingPhotoFile
+                            if (file != null) {
+                                val settings = remember { LocalStore.readSettings(ctx) }
+                                Column(
+                                    Modifier.widthIn(max = 320.dp).padding(6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(Color.Black),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        AsyncImage(
+                                            model = file,
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        if (photoCaption.isNotEmpty()) {
+                                            Surface(
+                                                color = Color(0x99000000),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .align(Alignment.BottomCenter)
+                                                    .padding(bottom = 8.dp)
+                                            ) {
+                                                Text(
+                                                    text = photoCaption,
+                                                    color = Color(settings.fontColor),
+                                                    textAlign = TextAlign.Center,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = photoCaption,
+                                        onValueChange = { photoCaption = it.take(100) },
+                                        placeholder = { Text("Add text over image (Snapchat style)…", fontSize = 12.sp, color = Color(0xFF888888)) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    Spacer(Modifier.height(10.dp))
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        TextButton({
+                                            pendingPhotoFile = null
+                                            photoCaption = ""
+                                            mode = Mode.MENU
+                                        }) {
+                                            Text("Cancel", color = Color(0xFF94A3B8))
+                                        }
+                                        Button(
+                                            onClick = {
+                                                val fileToSend = file
+                                                val caption = photoCaption.trim()
+                                                pendingPhotoFile = null
+                                                photoCaption = ""
+                                                job {
+                                                    val finalFile = withContext(Dispatchers.IO) {
+                                                        if (caption.isNotEmpty()) {
+                                                            val originalBmp = BitmapFactory.decodeFile(fileToSend.absolutePath)
+                                                            if (originalBmp != null) {
+                                                                val currentSettings = LocalStore.readSettings(ctx)
+                                                                val stamped = WidgetRenderer.overlayTextOnBitmap(
+                                                                    originalBmp,
+                                                                    caption,
+                                                                    currentSettings.fontStyle,
+                                                                    currentSettings.fontColor.toInt()
+                                                                )
+                                                                val stampedFile = File(ctx.cacheDir, "snap_stamped_${System.currentTimeMillis()}.jpg")
+                                                                FileOutputStream(stampedFile).use { out ->
+                                                                    stamped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                                                                }
+                                                                stampedFile
+                                                            } else fileToSend
+                                                        } else fileToSend
+                                                    }
+                                                    val url = Repo.upload(ctx, finalFile, "jpg")
+                                                    sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = caption))
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8))
+                                        ) {
+                                            Text("Send Snap 🚀", color = Color.Black, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            } else {
+                                mode = Mode.MENU
                             }
                         }
 
@@ -493,7 +644,7 @@ private fun MinimalRoundIcon(
 ) {
     Box(
         Modifier
-            .size(52.dp)
+            .size(46.dp)
             .shadow(6.dp, CircleShape)
             .clip(CircleShape)
             .background(Brush.linearGradient(gradient))
@@ -501,7 +652,7 @@ private fun MinimalRoundIcon(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Text(emoji, fontSize = 24.sp)
+        Text(emoji, fontSize = 21.sp)
     }
 }
 
@@ -518,7 +669,7 @@ private fun SubOption(icon: String, label: String, onClick: () -> Unit) {
             Modifier
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF334155)),
+                .background(Color(0xFF181818)),
             contentAlignment = Alignment.Center
         ) {
             Text(icon, fontSize = 22.sp)

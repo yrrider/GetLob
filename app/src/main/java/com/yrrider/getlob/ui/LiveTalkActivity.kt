@@ -56,7 +56,9 @@ class LiveTalkActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val sendAlert = intent.action != ACTION_OPEN_LIVE
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) { LiveScreen(sendAlert) { finish() } }
+            MaterialTheme(colorScheme = darkColorScheme(background = Color.Black, surface = Color(0xFF0D0D0D))) {
+                LiveScreen(sendAlert) { finish() }
+            }
         }
     }
 }
@@ -99,7 +101,10 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
     ) {
         Surface(
             Modifier.fillMaxWidth().padding(12.dp).navigationBarsPadding().clickable(none, null) { },
-            shape = RoundedCornerShape(24.dp), color = Color(0xFF2A2A3C), tonalElevation = 6.dp,
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF0D0D0D),
+            tonalElevation = 6.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
         ) {
             Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("\uD83D\uDCE1 Live talk", fontSize = 18.sp)

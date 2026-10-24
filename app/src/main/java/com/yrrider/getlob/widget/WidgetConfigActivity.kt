@@ -29,6 +29,8 @@ import androidx.glance.appwidget.updateAll
 import com.yrrider.getlob.data.LocalStore
 import com.yrrider.getlob.data.Repo
 import com.yrrider.getlob.data.WidgetSettings
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 val BORDER_COLORS = listOf(
@@ -52,17 +54,42 @@ val FONT_COLORS = listOf(
 val FONT_STYLES = listOf("Calligraphy", "Cursive", "Serif", "Modern")
 
 class WidgetConfigActivity : ComponentActivity() {
+    private var widgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val id = intent?.extras?.getInt(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
-            ?: AppWidgetManager.INVALID_APPWIDGET_ID
+        widgetId = intent?.extras?.getInt(
+            AppWidgetManager.EXTRA_APPWIDGET_ID,
+            AppWidgetManager.INVALID_APPWIDGET_ID
+        ) ?: AppWidgetManager.INVALID_APPWIDGET_ID
+
+        // Default to CANCELED until the user taps Done
         setResult(Activity.RESULT_CANCELED)
+
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(Modifier.fillMaxSize()) {
-                    ConfigScreen {
-                        setResult(Activity.RESULT_OK, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id))
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    background = Color(0xFF000000),
+                    surface = Color(0xFF0D0D0D),
+                    onBackground = Color(0xFFFFFFFF),
+                    onSurface = Color(0xFFFFFFFF)
+                )
+            ) {
+                Surface(Modifier.fillMaxSize(), color = Color(0xFF000000)) {
+                    ConfigScreen { finalSettings ->
+                        // 1. Save locally
+                        LocalStore.writeSettings(this, finalSettings)
+
+                        // 2. Set result OK immediately so launcher adds the widget without failure
+                        val resultValue = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                        setResult(Activity.RESULT_OK, resultValue)
                         finish()
+
+                        // 3. Update Glance widget & sync to Firestore in background
+                        CoroutineScope(Dispatchers.IO).launch {
+                            runCatching { PairWidget().updateAll(applicationContext) }
+                            runCatching { Repo.saveSettings(applicationContext, finalSettings) }
+                        }
                     }
                 }
             }
@@ -71,10 +98,11 @@ class WidgetConfigActivity : ComponentActivity() {
 }
 
 @Composable
-private fun ConfigScreen(onDone: () -> Unit) {
+private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
     var s by remember { mutableStateOf(LocalStore.readSettings(ctx)) }
+    var transparency by remember(s.bgTransparency) { mutableFloatStateOf(s.bgTransparency) }
+    var corner by remember(s.cornerDp) { mutableFloatStateOf(s.cornerDp.toFloat()) }
     val theme = WidgetThemes.all[s.themeIndex.coerceIn(WidgetThemes.all.indices)]
 
     Column(
@@ -86,48 +114,70 @@ private fun ConfigScreen(onDone: () -> Unit) {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Customize Widget", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+        Text(
+            "Customize Widget",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            color = Color.White
+        )
 
         // Live Frosted Glass Preview
         val previewBg = if (s.glassEffect) {
             Brush.verticalGradient(
                 listOf(
-                    Color(theme.bg).copy(alpha = (s.bgTransparency * 1.3f).coerceIn(0f, 1f)),
-                    Color(theme.bg).copy(alpha = (s.bgTransparency * 0.7f).coerceIn(0f, 1f))
+                    Color(theme.bg).copy(alpha = (transparency * 1.3f).coerceIn(0f, 1f)),
+                    Color(theme.bg).copy(alpha = (transparency * 0.7f).coerceIn(0f, 1f))
                 )
             )
         } else {
-            Brush.linearGradient(listOf(Color(theme.bg).copy(alpha = s.bgTransparency), Color(theme.bg).copy(alpha = s.bgTransparency)))
+            Brush.linearGradient(
+                listOf(
+                    Color(theme.bg).copy(alpha = transparency),
+                    Color(theme.bg).copy(alpha = transparency)
+                )
+            )
         }
 
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(130.dp)
-                .clip(RoundedCornerShape(s.cornerDp.dp))
+                .clip(RoundedCornerShape(corner.dp))
                 .background(previewBg)
                 .border(
                     width = (if (s.borderWidthDp > 0) s.borderWidthDp else 0f).dp,
                     color = Color(s.borderColor),
-                    shape = RoundedCornerShape(s.cornerDp.dp)
+                    shape = RoundedCornerShape(corner.dp)
                 ),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Goodmorning beta", color = Color(s.fontColor), fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    "Goodmorning beta",
+                    color = Color(s.fontColor),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
                 Spacer(Modifier.height(4.dp))
-                Text("✨ ${s.fontStyle} Style", color = Color(s.fontColor).copy(alpha = 0.75f), fontSize = 12.sp)
+                Text(
+                    "❤️ Love • ${s.fontStyle} Style",
+                    color = Color(s.fontColor).copy(alpha = 0.8f),
+                    fontSize = 12.sp
+                )
             }
         }
 
         // Glass UI Effect Switch
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Glass UI Effect", fontWeight = FontWeight.SemiBold)
+                Text("Glass UI Effect", fontWeight = FontWeight.SemiBold, color = Color.White)
                 Text("Frosted specular reflection & glassy sheen", fontSize = 12.sp, color = Color(0xFF94A3B8))
             }
             Switch(
@@ -136,107 +186,138 @@ private fun ConfigScreen(onDone: () -> Unit) {
             )
         }
 
-        // Background Transparency Slider
-        Text("Background Transparency: ${(s.bgTransparency * 100).toInt()}%")
-        Slider(
-            value = s.bgTransparency,
-            onValueChange = { s = s.copy(bgTransparency = it) },
-            valueRange = 0.05f..1.0f
-        )
+        // Background Transparency Slider (Smooth dragging without IPC lag)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp)
+        ) {
+            Text(
+                "Background Transparency: ${(transparency * 100).toInt()}%",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold
+            )
+            Slider(
+                value = transparency,
+                onValueChange = { transparency = it },
+                onValueChangeFinished = { s = s.copy(bgTransparency = transparency) },
+                valueRange = 0.05f..1.0f
+            )
+        }
 
         // Border Colour
-        Text("Border Colour", fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            BORDER_COLORS.forEach { (colorLong, _) ->
-                Box(
-                    Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(if (colorLong == 0L) Color(0xFF334155) else Color(colorLong))
-                        .border(
-                            2.dp,
-                            if (s.borderColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
-                            CircleShape
-                        )
-                        .clickable { s = s.copy(borderColor = colorLong) }
-                )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp)
+        ) {
+            Text("Border Colour", fontWeight = FontWeight.SemiBold, color = Color.White)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BORDER_COLORS.forEach { (colorLong, _) ->
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(if (colorLong == 0L) Color(0xFF262626) else Color(colorLong))
+                            .border(
+                                2.dp,
+                                if (s.borderColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
+                                CircleShape
+                            )
+                            .clickable { s = s.copy(borderColor = colorLong) }
+                    )
+                }
             }
         }
 
         // Font Style (Calligraphy, Cursive, Serif, Modern)
-        Text("Font Style", fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FONT_STYLES.forEach { style ->
-                FilterChip(
-                    selected = s.fontStyle == style,
-                    onClick = { s = s.copy(fontStyle = style) },
-                    label = { Text(style, fontSize = 12.sp) }
-                )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp)
+        ) {
+            Text("Font Style", fontWeight = FontWeight.SemiBold, color = Color.White)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FONT_STYLES.forEach { style ->
+                    FilterChip(
+                        selected = s.fontStyle == style,
+                        onClick = { s = s.copy(fontStyle = style) },
+                        label = { Text(style, fontSize = 12.sp) }
+                    )
+                }
             }
         }
 
         // Font Colour
-        Text("Font Colour", fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FONT_COLORS.forEach { (colorLong, _) ->
-                Box(
-                    Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(colorLong))
-                        .border(
-                            2.dp,
-                            if (s.fontColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
-                            CircleShape
-                        )
-                        .clickable { s = s.copy(fontColor = colorLong) }
-                )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp)
+        ) {
+            Text("Font Colour", fontWeight = FontWeight.SemiBold, color = Color.White)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FONT_COLORS.forEach { (colorLong, _) ->
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(colorLong))
+                            .border(
+                                2.dp,
+                                if (s.fontColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
+                                CircleShape
+                            )
+                            .clickable { s = s.copy(fontColor = colorLong) }
+                    )
+                }
             }
         }
 
         // Corner Roundness
-        Text("Corner Roundness: ${s.cornerDp} dp")
-        Slider(
-            value = s.cornerDp.toFloat(),
-            onValueChange = { s = s.copy(cornerDp = it.toInt()) },
-            valueRange = 8f..36f
-        )
-
-        // Base Theme
-        Text("Base Color Theme", fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WidgetThemes.all.forEachIndexed { i, th ->
-                Box(
-                    Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(th.bg))
-                        .border(
-                            2.dp,
-                            if (i == s.themeIndex) Color(th.accent) else Color(0x33FFFFFF),
-                            CircleShape
-                        )
-                        .clickable { s = s.copy(themeIndex = i) }
-                )
-            }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(14.dp)
+        ) {
+            Text("Corner Roundness: ${corner.toInt()} dp", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Slider(
+                value = corner,
+                onValueChange = { corner = it },
+                onValueChangeFinished = { s = s.copy(cornerDp = corner.toInt()) },
+                valueRange = 8f..36f
+            )
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
         Button(
             onClick = {
-                LocalStore.writeSettings(ctx, s)
-                scope.launch {
-                    Repo.saveSettings(ctx, s)
-                    PairWidget().updateAll(ctx)
-                    onDone()
-                }
+                val finalSettings = s.copy(
+                    bgTransparency = transparency,
+                    cornerDp = corner.toInt()
+                )
+                onDone(finalSettings)
             },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
             shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8), contentColor = Color(0xFF0F172A))
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color(0xFF000000))
         ) {
-            Text("Done (Sync to Both Devices)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("Add Widget to Home Screen", fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
     }
 }

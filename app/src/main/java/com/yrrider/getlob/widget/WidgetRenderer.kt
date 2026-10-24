@@ -3,6 +3,7 @@ package com.yrrider.getlob.widget
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RectF
@@ -20,6 +21,7 @@ import com.yrrider.getlob.data.WidgetState
 
 object WidgetRenderer {
     private const val TAG = "WidgetRenderer"
+    private const val MAX_DIM = 400
     private var cachedCursiveTypeface: Typeface? = null
     private var cachedCalligraphyTypeface: Typeface? = null
 
@@ -53,23 +55,26 @@ object WidgetRenderer {
     /**
      * Creates the glassmorphic frosted background with specular highlights, rounded corners,
      * transparency value, and customizable border.
+     * Capped to MAX_DIM (400px) to guarantee it never exceeds Android RemoteViews IPC limits.
      */
     fun renderGlassBackground(
         ctx: Context,
-        wPx: Int,
-        hPx: Int,
+        rawW: Int,
+        rawH: Int,
         settings: WidgetSettings,
         theme: WidgetTheme
     ): Bitmap {
-        val bmp = Bitmap.createBitmap(wPx.coerceAtLeast(1), hPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val wPx = rawW.coerceIn(80, MAX_DIM)
+        val hPx = rawH.coerceIn(80, MAX_DIM)
+        val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         val density = ctx.resources.displayMetrics.density
-        val cornerPx = settings.cornerDp * density
-        val strokeWidthPx = settings.borderWidthDp * density
+        val cornerPx = (settings.cornerDp * density * (wPx.toFloat() / rawW.coerceAtLeast(1))).coerceIn(4f, wPx / 2f)
+        val strokeWidthPx = (settings.borderWidthDp * density).coerceAtLeast(1f)
         val inset = strokeWidthPx / 2f
         val rect = RectF(inset, inset, wPx - inset, hPx - inset)
 
-        val alphaInt = (settings.bgTransparency.coerceIn(0f, 1f) * 255).toInt()
+        val alphaInt = (settings.bgTransparency.coerceIn(0.05f, 1f) * 255).toInt()
         val baseColor = theme.bg.toInt()
 
         if (settings.glassEffect) {
@@ -102,7 +107,7 @@ object WidgetRenderer {
             canvas.drawRoundRect(rect, cornerPx, cornerPx, sheenPaint)
 
             // Crisp glass border stroke
-            if (strokeWidthPx > 0f) {
+            if (strokeWidthPx > 0f && settings.borderColor != 0L) {
                 val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.STROKE
                     strokeWidth = strokeWidthPx
@@ -131,7 +136,7 @@ object WidgetRenderer {
             }
             canvas.drawRoundRect(rect, cornerPx, cornerPx, fillPaint)
 
-            if (strokeWidthPx > 0f) {
+            if (strokeWidthPx > 0f && settings.borderColor != 0L) {
                 val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.STROKE
                     strokeWidth = strokeWidthPx
@@ -145,30 +150,31 @@ object WidgetRenderer {
     }
 
     /**
-     * Renders text note or emoji/mood into a high-DPI Bitmap using the selected font style
+     * Renders text note or emoji/mood into a compact Bitmap using the selected font style
      * (Calligraphy, Cursive, Serif, Modern), custom font color, and multiline wrapping.
-     * Note: "Partner's Mood" label is completely removed as requested; only emoji and mood are shown!
+     * Note: "Partner's Mood" label is completely removed; only emoji and mood are shown!
      */
     fun renderTextOrMoodBitmap(
         ctx: Context,
-        wPx: Int,
-        hPx: Int,
+        rawW: Int,
+        rawH: Int,
         s: WidgetState,
         settings: WidgetSettings,
         theme: WidgetTheme
     ): Bitmap {
-        val bmp = Bitmap.createBitmap(wPx.coerceAtLeast(1), hPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val wPx = rawW.coerceIn(80, MAX_DIM)
+        val hPx = rawH.coerceIn(80, MAX_DIM)
+        val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        val density = ctx.resources.displayMetrics.density
+        val density = ctx.resources.displayMetrics.density * (wPx.toFloat() / rawW.coerceAtLeast(1))
         val typeface = getTypeface(ctx, settings.fontStyle)
         val fontColor = settings.fontColor.toInt()
         val isEmoji = s.kind == MsgType.EMOJI
 
-        val padX = (18 * density).toInt()
+        val padX = (16 * density).toInt()
         val availW = (wPx - padX * 2).coerceAtLeast(10)
 
         if (isEmoji) {
-            // Extract emoji and optional label if combined (e.g. "❤️ Love")
             val fullText = s.text.trim()
             val parts = fullText.split(" ", limit = 2)
             val emoji = parts.firstOrNull() ?: fullText
@@ -176,30 +182,29 @@ object WidgetRenderer {
 
             val minDim = minOf(wPx, hPx)
             val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textSize = minDim * 0.38f
+                textSize = minDim * 0.40f
                 textAlign = Paint.Align.CENTER
             }
 
-            val emojiY = if (moodLabel.isNotEmpty()) hPx * 0.44f else hPx * 0.54f
+            val emojiY = if (moodLabel.isNotEmpty()) hPx * 0.46f else hPx * 0.58f
             canvas.drawText(emoji, wPx / 2f, emojiY, emojiPaint)
 
             if (moodLabel.isNotEmpty()) {
                 val moodPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = fontColor
                     this.typeface = typeface
-                    textSize = (19 * density).coerceIn(14f * density, minDim * 0.16f)
+                    textSize = (18 * density).coerceIn(13f * density, minDim * 0.16f)
                     textAlign = Paint.Align.CENTER
-                    setShadowLayer(3 * density, 0f, 1f * density, 0x66000000)
+                    setShadowLayer(3 * density, 0f, 1f * density, 0x77000000)
                 }
-                canvas.drawText(moodLabel, wPx / 2f, hPx * 0.72f, moodPaint)
+                canvas.drawText(moodLabel, wPx / 2f, hPx * 0.76f, moodPaint)
             }
         } else if (s.text.isNotEmpty()) {
-            // Text Note with Calligraphy / Cursive wrapping
             val minDim = minOf(wPx, hPx)
             val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = fontColor
                 this.typeface = typeface
-                textSize = (22 * density).coerceIn(16f * density, minDim * 0.18f)
+                textSize = (20 * density).coerceIn(14f * density, minDim * 0.17f)
                 setShadowLayer(4 * density, 0f, 1.5f * density, 0x88000000)
             }
 
@@ -217,32 +222,70 @@ object WidgetRenderer {
             }
 
             val totalH = layout.height
-            val startY = ((hPx - totalH) / 2f).coerceAtLeast(12 * density)
+            val startY = ((hPx - totalH) / 2f).coerceAtLeast(8 * density)
 
             canvas.save()
             canvas.translate(padX.toFloat(), startY)
             layout.draw(canvas)
             canvas.restore()
         } else {
-            // Default Empty state
             val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = theme.accent.toInt()
                 this.typeface = typeface
-                textSize = 24 * density
+                textSize = 22 * density
                 textAlign = Paint.Align.CENTER
                 setShadowLayer(3 * density, 0f, 1f * density, 0x66000000)
             }
             canvas.drawText("GetLob ❤️", wPx / 2f, hPx * 0.46f, titlePaint)
 
             val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = ColorUtils.setAlphaComponent(fontColor, 200)
+                color = ColorUtils.setAlphaComponent(fontColor, 190)
                 this.typeface = Typeface.DEFAULT
-                textSize = 12 * density
+                textSize = 11 * density
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("Tap to send note or photo", wPx / 2f, hPx * 0.62f, subPaint)
+            canvas.drawText("Tap to connect", wPx / 2f, hPx * 0.62f, subPaint)
         }
 
         return bmp
+    }
+
+    /**
+     * Burns caption text directly onto an image bitmap (Snapchat style).
+     * Renders a translucent banner with centered bold/stylish text.
+     */
+    fun overlayTextOnBitmap(src: Bitmap, caption: String, fontStyle: String, fontColor: Int): Bitmap {
+        if (caption.isBlank()) return src
+        val out = src.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(out)
+        val w = out.width
+        val h = out.height
+
+        val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = fontColor
+            textSize = (w * 0.048f).coerceIn(24f, 72f)
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+            setShadowLayer(6f, 0f, 2f, 0xFF000000.toInt())
+        }
+
+        val paddingY = textPaint.textSize * 0.6f
+        val textHeight = textPaint.descent() - textPaint.ascent()
+        val bannerHeight = textHeight + paddingY * 2
+        val bannerTop = (h * 0.72f).coerceAtMost(h - bannerHeight - 20f)
+        val bannerBottom = bannerTop + bannerHeight
+
+        // Translucent dark banner like Snapchat
+        val bannerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x99000000.toInt()
+            style = Paint.Style.FILL
+        }
+        canvas.drawRect(0f, bannerTop, w.toFloat(), bannerBottom, bannerPaint)
+
+        // Text centered in banner
+        val textY = bannerTop + paddingY - textPaint.ascent()
+        canvas.drawText(caption, w / 2f, textY, textPaint)
+
+        return out
     }
 }

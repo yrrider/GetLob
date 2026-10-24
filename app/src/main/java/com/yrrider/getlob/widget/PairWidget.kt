@@ -22,7 +22,6 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.ActionCallback
-import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -35,8 +34,6 @@ import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.padding
-import androidx.glance.layout.size
-import androidx.glance.layout.width
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
@@ -48,7 +45,6 @@ import com.yrrider.getlob.data.MsgType
 import com.yrrider.getlob.data.Repo
 import com.yrrider.getlob.data.WidgetSettings
 import com.yrrider.getlob.data.WidgetState
-import com.yrrider.getlob.ui.LiveTalkActivity
 import com.yrrider.getlob.ui.OverlayActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -56,10 +52,11 @@ import kotlinx.coroutines.withContext
 /**
  * Glance home-screen widget. Displays:
  *  - Frosted Glass UI effect with customizable transparency & border color
+ *  - Clean and beautiful canvas with no bottom satellite icons
  *  - High-res Still photo (crop/fit)
  *  - Looping animated Video / GIF slideshow
  *  - Text notes & Mood emojis with Cursive / Calligraphy font styles
- *  - Quick buttons for Live Talk & Vibe haptic pulse
+ *  - Tapping opens the smooth Google-style floating action overlay
  */
 class PairWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = PairWidget()
@@ -81,8 +78,13 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
     val ctx = LocalContext.current
     val size = LocalSize.current
     val density = ctx.resources.displayMetrics.density
-    val wPx = (size.width.value * density).toInt().coerceAtLeast(1)
-    val hPx = (size.height.value * density).toInt().coerceAtLeast(1)
+
+    // Defend against NaN or zero dimensions during initial widget placement
+    val wDp = size.width.value.takeIf { !it.isNaN() && it > 10f } ?: 160f
+    val hDp = size.height.value.takeIf { !it.isNaN() && it > 10f } ?: 160f
+    val wPx = (wDp * density).toInt().coerceIn(80, 400)
+    val hPx = (hDp * density).toInt().coerceIn(80, 400)
+
     val open = actionStartActivity<OverlayActivity>()
     val animated = (s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) && s.frameCount > 1
 
@@ -95,26 +97,30 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
         if (animated) buildFlipper(ctx, s, wPx, hPx) else null
     }
 
-    // Glass frosted background bitmap
+    // Glass frosted background bitmap (compact size, capped to 400px to avoid IPC parcel limits)
     val glassBg: Bitmap = remember(wPx, hPx, settings, theme) {
         WidgetRenderer.renderGlassBackground(ctx, wPx, hPx, settings, theme)
     }
 
-    // High quality Typography Bitmap for text notes, moods (Calligraphy / Cursive) or empty state
+    // Typography Bitmap for text notes and moods
     val textBmp: Bitmap? = remember(s.updatedAt, s.text, s.kind, wPx, hPx, settings, theme) {
         if (flipper == null && still == null) {
             WidgetRenderer.renderTextOrMoodBitmap(ctx, wPx, hPx, s, settings, theme)
         } else null
     }
 
+    val bgAlpha = settings.bgTransparency.coerceIn(0.05f, 1f)
+    val baseColor = Color(theme.bg).copy(alpha = bgAlpha)
+
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
+            .background(ColorProvider(baseColor))
             .cornerRadius(settings.cornerDp.dp)
             .clickable(open),
         contentAlignment = Alignment.Center,
     ) {
-        // Layer 1: Frosted Glass UI Background (transparency, border, specular glass gradient)
+        // Layer 1: Frosted Glass UI Background (specular sheen & border)
         Image(
             provider = ImageProvider(glassBg),
             contentDescription = null,
@@ -122,7 +128,7 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
             modifier = GlanceModifier.fillMaxSize()
         )
 
-        // Layer 2: Content (Animated media, photo still, or calligraphy/cursive text note)
+        // Layer 2: Clean content (Animated media, photo still, or text note)
         when {
             flipper != null -> {
                 AndroidRemoteViews(remoteViews = flipper, modifier = GlanceModifier.fillMaxSize().clickable(open))
@@ -145,69 +151,30 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
             }
         }
 
-        // Layer 3: Top indicators & bottom quick actions
-        Column(modifier = GlanceModifier.fillMaxSize().padding(10.dp)) {
-            // Top badges
-            Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                if (animated || s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) {
+        // Layer 3: Minimal indicators only (No bottom icons - clean and beautiful widget)
+        if (animated || s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) {
+            Column(modifier = GlanceModifier.fillMaxSize().padding(8.dp)) {
+                Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = GlanceModifier
-                            .cornerRadius(10.dp)
+                            .cornerRadius(8.dp)
                             .background(ColorProvider(Color(0x99000000)))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = if (s.kind == MsgType.VIDEO) "▶ VIDEO" else "GIF",
-                            style = TextStyle(color = ColorProvider(Color.White), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            style = TextStyle(color = ColorProvider(Color.White), fontSize = 9.sp, fontWeight = FontWeight.Bold)
                         )
                     }
+                    Spacer(GlanceModifier.defaultWeight())
                 }
-                Spacer(GlanceModifier.defaultWeight())
-                // Subtle glowing accent indicator dot
-                Box(
-                    modifier = GlanceModifier
-                        .size(8.dp)
-                        .cornerRadius(4.dp)
-                        .background(ColorProvider(Color(settings.fontColor)))
-                ) {}
-            }
-
-            Spacer(GlanceModifier.defaultWeight())
-
-            // Bottom Quick Action Buttons: Live Talk & Vibe Haptic
-            Row(modifier = GlanceModifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-                QuickButton(
-                    icon = "📡",
-                    theme = theme,
-                    action = actionStartActivity<LiveTalkActivity>()
-                )
-                Spacer(GlanceModifier.width(8.dp))
-                QuickButton(
-                    icon = "📳",
-                    theme = theme,
-                    action = actionRunCallback<VibeAction>()
-                )
             }
         }
     }
 }
 
-@Composable
-private fun QuickButton(icon: String, theme: WidgetTheme, action: androidx.glance.action.Action) {
-    Box(
-        modifier = GlanceModifier
-            .size(34.dp)
-            .cornerRadius(17.dp)
-            .background(ColorProvider(Color(theme.accent).copy(alpha = 0.85f)))
-            .clickable(action),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(icon, style = TextStyle(fontSize = 15.sp))
-    }
-}
-
 private fun buildFlipper(ctx: Context, s: WidgetState, wPx: Int, hPx: Int): RemoteViews? {
-    val k = minOf(1f, 360f / maxOf(wPx, hPx))
+    val k = minOf(1f, 320f / maxOf(wPx, hPx))
     val fw = (wPx * k).toInt().coerceAtLeast(1)
     val fh = (hPx * k).toInt().coerceAtLeast(1)
     val root = RemoteViews(ctx.packageName, R.layout.widget_flipper)
