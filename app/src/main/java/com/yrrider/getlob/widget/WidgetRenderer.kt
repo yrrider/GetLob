@@ -64,8 +64,10 @@ object WidgetRenderer {
         settings: WidgetSettings,
         theme: WidgetTheme
     ): Bitmap {
-        val wPx = rawW.coerceIn(80, MAX_DIM)
-        val hPx = rawH.coerceIn(80, MAX_DIM)
+        val maxSide = maxOf(rawW.coerceAtLeast(80), rawH.coerceAtLeast(80))
+        val scale = if (maxSide > MAX_DIM) MAX_DIM.toFloat() / maxSide else 1f
+        val wPx = (rawW * scale).toInt().coerceAtLeast(80)
+        val hPx = (rawH * scale).toInt().coerceAtLeast(80)
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         val density = ctx.resources.displayMetrics.density
@@ -168,8 +170,10 @@ object WidgetRenderer {
         settings: WidgetSettings,
         theme: WidgetTheme
     ): Bitmap {
-        val wPx = rawW.coerceIn(80, MAX_DIM)
-        val hPx = rawH.coerceIn(80, MAX_DIM)
+        val maxSide = maxOf(rawW.coerceAtLeast(80), rawH.coerceAtLeast(80))
+        val scale = if (maxSide > MAX_DIM) MAX_DIM.toFloat() / maxSide else 1f
+        val wPx = (rawW * scale).toInt().coerceAtLeast(80)
+        val hPx = (rawH * scale).toInt().coerceAtLeast(80)
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         val density = ctx.resources.displayMetrics.density * (wPx.toFloat() / rawW.coerceAtLeast(1))
@@ -180,7 +184,23 @@ object WidgetRenderer {
         val padX = (16 * density).toInt()
         val availW = (wPx - padX * 2).coerceAtLeast(10)
 
-        if (isEmoji) {
+        if (s.kind == MsgType.SOS) {
+            val minDim = minOf(wPx, hPx)
+            val sirenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = minDim * 0.35f
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText("🚨", wPx / 2f, hPx * 0.42f, sirenPaint)
+            val alertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFEF4444.toInt()
+                this.typeface = Typeface.DEFAULT_BOLD
+                textSize = (18 * density).coerceIn(14f * density, minDim * 0.16f)
+                textAlign = Paint.Align.CENTER
+                setShadowLayer(4 * density, 0f, 1f * density, 0xAA000000.toInt())
+            }
+            val sosText = s.text.ifBlank { "EMERGENCY SOS" }
+            canvas.drawText(sosText, wPx / 2f, hPx * 0.72f, alertPaint)
+        } else if (isEmoji) {
             val fullText = s.text.trim()
             val parts = fullText.split(" ", limit = 2)
             val emoji = parts.firstOrNull() ?: fullText

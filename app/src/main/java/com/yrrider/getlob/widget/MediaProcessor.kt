@@ -40,30 +40,39 @@ object MediaProcessor {
                 clear(ctx).let { WidgetState(kind = m.type, text = m.text) }
 
             MsgType.IMAGE -> {
-                clear(ctx)
-                val f = SecureMedia.fetchTo(ctx, m.mediaUrl, "img.jpg")
-                writePoster(ctx, f.absolutePath)
-                WidgetState(kind = MsgType.IMAGE, text = m.text, posterPath = LocalStore.posterFile(ctx).absolutePath, mediaUrl = m.mediaUrl)
+                val f = runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                if (f != null && f.exists() && f.length() > 0) {
+                    clear(ctx)
+                    writePoster(ctx, f.absolutePath)
+                    WidgetState(kind = MsgType.IMAGE, text = m.text, posterPath = LocalStore.posterFile(ctx).absolutePath, mediaUrl = m.mediaUrl)
+                } else null
             }
 
             MsgType.GIF -> {
-                clear(ctx)
-                val f = SecureMedia.fetchTo(ctx, m.mediaUrl, "anim.gif")
-                val n = extractGifFrames(ctx, f)
-                WidgetState(kind = MsgType.GIF, text = m.text, posterPath = LocalStore.frameFile(ctx, 0).absolutePath, frameCount = n, mediaUrl = m.mediaUrl)
+                val f = runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                if (f != null && f.exists() && f.length() > 0) {
+                    clear(ctx)
+                    val n = extractGifFrames(ctx, f)
+                    WidgetState(kind = MsgType.GIF, text = m.text, posterPath = LocalStore.frameFile(ctx, 0).absolutePath, frameCount = n, mediaUrl = m.mediaUrl)
+                } else null
             }
 
             MsgType.VIDEO -> {
-                clear(ctx)
-                val f = SecureMedia.fetchTo(ctx, m.mediaUrl, "clip.mp4")
-                val n = extractVideoFrames(ctx, f)
-                WidgetState(kind = MsgType.VIDEO, text = m.text, posterPath = LocalStore.posterFile(ctx).absolutePath, frameCount = n, mediaUrl = m.mediaUrl)
+                val f = runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                if (f != null && f.exists() && f.length() > 0) {
+                    clear(ctx)
+                    val n = extractVideoFrames(ctx, f)
+                    WidgetState(kind = MsgType.VIDEO, text = m.text, posterPath = LocalStore.posterFile(ctx).absolutePath, frameCount = n, mediaUrl = m.mediaUrl)
+                } else null
             }
 
             MsgType.VOICE, MsgType.PTT ->
                 WidgetState(kind = MsgType.VOICE, text = "\uD83C\uDF99 New voice message", mediaUrl = m.mediaUrl)
 
-            MsgType.SOS -> old.copy(kind = MsgType.SOS, text = "\uD83C\uDD98 SOS")
+            MsgType.SOS -> {
+                clear(ctx)
+                WidgetState(kind = MsgType.SOS, text = "🚨 SOS ALERT")
+            }
             MsgType.GAME -> old.copy(kind = MsgType.GAME, text = m.text.ifEmpty { "\uD83C\uDFAE Your turn!" })
             else -> null    // vibe etc. do not change the widget
         }

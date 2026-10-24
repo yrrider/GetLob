@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -43,6 +44,7 @@ val BORDER_COLORS = listOf(
 )
 
 val BG_COLORS = listOf(
+    0L to "Theme Default",
     0xFF000000L to "Pitch Black",
     0xFF18181BL to "Charcoal",
     0xFF0F172AL to "Midnight",
@@ -188,13 +190,16 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
         ) {
             Text("Widget Background Colour", color = Color.White, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 BG_COLORS.forEach { (colorLong, _) ->
                     Box(
                         Modifier
                             .size(34.dp)
                             .clip(CircleShape)
-                            .background(Color(colorLong))
+                            .background(if (colorLong == 0L) Color(0xFF27272A) else Color(colorLong))
                             .border(
                                 2.dp,
                                 if (s.bgColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
@@ -257,7 +262,10 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
         ) {
             Text("Border Colour", fontWeight = FontWeight.SemiBold, color = Color.White)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 BORDER_COLORS.forEach { (colorLong, _) ->
                     Box(
                         Modifier
@@ -322,13 +330,16 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
         ) {
             Text("Font Colour", fontWeight = FontWeight.SemiBold, color = Color.White)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 FONT_COLORS.forEach { (colorLong, _) ->
                     Box(
                         Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(Color(colorLong))
+                            .background(if (colorLong == 0L) Color(0xFF27272A) else Color(colorLong))
                             .border(
                                 2.dp,
                                 if (s.fontColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),

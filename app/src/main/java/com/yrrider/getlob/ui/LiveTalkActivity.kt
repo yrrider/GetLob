@@ -35,6 +35,7 @@ import io.livekit.android.RoomOptions
 import io.livekit.android.e2ee.E2EEOptions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
@@ -79,10 +80,16 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
     var status by remember { mutableStateOf("Connecting to room\u2026") }
     var connected by remember { mutableStateOf(false) }
     var partnerJoined by remember { mutableStateOf(false) }
-    var isMuted by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(true) }
 
     fun hasMic() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-    val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted && !isMuted && connected && partnerJoined) {
+            scope.launch {
+                runCatching { room.localParticipant.setMicrophoneEnabled(true) }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (!hasMic()) micPerm.launch(Manifest.permission.RECORD_AUDIO)
@@ -100,21 +107,22 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
 
     LaunchedEffect(connected) {
         if (connected) {
-            while (isActive) {
+            partnerJoined = room.remoteParticipants.isNotEmpty()
+            if (partnerJoined) status = "🟢 Partner Joined! (Live)"
+            room.events.events.collect {
                 val hasPartner = room.remoteParticipants.isNotEmpty()
                 if (hasPartner != partnerJoined) {
                     partnerJoined = hasPartner
                     if (hasPartner) {
                         status = "🟢 Partner Joined! (Live)"
-                        if (!isMuted && hasMic()) {
-                            runCatching { room.localParticipant.setMicrophoneEnabled(true) }
-                        }
                     } else {
                         status = "Waiting for partner to join\u2026"
-                        runCatching { room.localParticipant.setMicrophoneEnabled(false) }
+                        isMuted = true
+                        scope.launch {
+                            runCatching { room.localParticipant.setMicrophoneEnabled(false) }
+                        }
                     }
                 }
-                delay(600)
             }
         }
     }
@@ -129,6 +137,7 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
     fun toggleMute() {
         if (!connected || !partnerJoined) return
         if (!hasMic()) {
+            isMuted = false
             micPerm.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -153,7 +162,23 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
         ) {
             Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("📡 Tap to Talk", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (liveKey != null) Color(0x2210B981) else Color(0x22EF4444))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = if (liveKey != null) "🔒 Encrypted" else "🔓 Not encrypted",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (liveKey != null) Color(0xFF34D399) else Color(0xFFF87171)
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = status,
                     fontSize = 14.sp,

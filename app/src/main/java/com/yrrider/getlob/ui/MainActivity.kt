@@ -19,6 +19,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -249,7 +251,9 @@ private fun App() {
     var lastAppliedMessageId by remember { mutableStateOf("") }
 
     LaunchedEffect(pairInfo?.canvasClearedAt) {
-        if ((pairInfo?.canvasClearedAt ?: 0L) > 0L) {
+        val remoteCleared = pairInfo?.canvasClearedAt ?: 0L
+        if (remoteCleared > 0L && remoteCleared > LocalStore.getLastClearedAt(ctx)) {
+            LocalStore.setLastClearedAt(ctx, remoteCleared)
             MediaProcessor.clearCanvas(ctx)
             lastAppliedMessageId = ""
         }
@@ -392,6 +396,8 @@ private fun App() {
 
                             val url = Repo.upload(ctx, finalFile, "jpg")
                             sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = captionToSend))
+                            if (finalFile != fileToSend) finalFile.delete()
+                            if (fileToSend.name.startsWith("snap_")) fileToSend.delete()
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFFFFF), contentColor = Color(0xFF000000)),
@@ -401,7 +407,11 @@ private fun App() {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingPhotoFile = null; photoCaption = "" }) {
+                TextButton(onClick = {
+                    if (pendingPhotoFile?.name?.startsWith("snap_") == true) pendingPhotoFile?.delete()
+                    pendingPhotoFile = null
+                    photoCaption = ""
+                }) {
                     Text("Cancel", color = Color(0xFF94A3B8))
                 }
             }
@@ -555,7 +565,7 @@ private fun App() {
                         OutlinedButton(
                             onClick = {
                                 scope.launch {
-                                    Repo.unpair(ctx)
+                                    runCatching { Repo.unpair(ctx) }
                                     pairId = ""
                                     inviteCode = ""
                                 }
@@ -848,20 +858,28 @@ private fun App() {
                             Column {
                                 Text("Widget Background Colour", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(6.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
                                     BG_COLORS.forEach { (colorLong, _) ->
                                         Box(
                                             Modifier
                                                 .size(32.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(colorLong))
+                                                .background(if (colorLong == 0L) Color(0xFF27272A) else Color(colorLong))
                                                 .border(
                                                     2.dp,
                                                     if (widgetSettings.bgColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
                                                     CircleShape
                                                 )
-                                                .clickable { updateSettings(widgetSettings.copy(bgColor = colorLong)) }
-                                        )
+                                                .clickable { updateSettings(widgetSettings.copy(bgColor = colorLong)) },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (colorLong == 0L) {
+                                                Text("T", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -914,13 +932,16 @@ private fun App() {
                             Column {
                                 Text("Font Colour (Both Devices)", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(6.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
                                     FONT_COLORS.forEach { (colorLong, _) ->
                                         Box(
                                             Modifier
                                                 .size(32.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(colorLong))
+                                                .background(if (colorLong == 0L) Color(0xFF27272A) else Color(colorLong))
                                                 .border(
                                                     2.dp,
                                                     if (widgetSettings.fontColor == colorLong) Color(0xFF38BDF8) else Color(0x33FFFFFF),
@@ -936,7 +957,10 @@ private fun App() {
                             Column {
                                 Text("Border Colour", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(6.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
                                     BORDER_COLORS.forEach { (colorLong, _) ->
                                         Box(
                                             Modifier
@@ -1021,7 +1045,7 @@ private fun App() {
                                 OutlinedButton(
                                     onClick = {
                                         scope.launch {
-                                            Repo.unpair(ctx)
+                                            runCatching { Repo.unpair(ctx) }
                                             pairId = ""
                                             inviteCode = ""
                                         }

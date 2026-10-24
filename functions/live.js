@@ -36,36 +36,3 @@ exports.getLiveToken = onCall({ secrets: [LIVEKIT_API_KEY, LIVEKIT_API_SECRET] }
   at.addGrant({ roomJoin: true, room: pairId, canPublish: true, canSubscribe: true });
   return { token: await at.toJwt(), url: (LIVEKIT_URL.value() || "").trim() };
 });
-
-/**
- * When someone opens live talk the app writes a message of type "live".
- * Send the partner a visible notification ("Tap to talk"); tapping it opens LiveTalkActivity.
- */
-exports.onLiveAlert = onDocumentCreated("pairs/{pairId}/messages/{msgId}", async (event) => {
-  const snap = event.data;
-  if (!snap) return;
-  const m = snap.data();
-  if (m.type !== "live") return;
-
-  const pair = await db().collection("pairs").doc(event.params.pairId).get();
-  const target = ((pair.data() || {}).members || []).find((u) => u !== m.from);
-  if (!target) return;
-  const user = await db().collection("users").doc(target).get();
-  const token = user.exists && user.data().fcmToken;
-  if (!token) return;
-
-  await admin.messaging().send({
-    token,
-    notification: { title: "📡 Push to talk", body: "Tap to talk" },
-    data: { type: "live", msgId: snap.id, senderUid: String(m.from || "") },
-    android: {
-      priority: "high",
-      ttl: 30 * 1000,
-      notification: {
-        channelId: "ptt",
-        clickAction: "com.yrrider.getlob.OPEN_LIVE",
-        defaultSound: true,
-      },
-    },
-  }).catch((e) => console.error(e));
-});

@@ -42,7 +42,7 @@ object ImageFit {
 
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sample
-            inPreferredConfig = Bitmap.Config.RGB_565
+            inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         val decoded = BitmapFactory.decodeFile(srcFile.absolutePath, opts) ?: return srcFile
 

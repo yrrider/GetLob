@@ -13,7 +13,20 @@ import java.net.URL
 
 /** Downloads media and decrypts it (if needed) into the cache so players and image loaders can use it. */
 object SecureMedia {
+    /** Purges temporary and decrypted files in cache older than 24 hours to prevent cache leaks. */
+    fun purgeOldCache(ctx: Context) {
+        val cutoff = System.currentTimeMillis() - 24 * 3600 * 1000L
+        ctx.cacheDir?.listFiles()?.forEach { file ->
+            val name = file.name
+            if (name.startsWith("snap_") || name.startsWith("fast_") || name.startsWith("dec_") || name.startsWith("dl_")) {
+                if (file.lastModified() < cutoff) {
+                    runCatching { file.delete() }
+                }
+            }
+        }
+    }
     suspend fun fetch(ctx: Context, url: String): File = withContext(Dispatchers.IO) {
+        purgeOldCache(ctx)
         val out = File(ctx.cacheDir, "dec_${url.substringBefore('?').hashCode()}")
         if (out.exists() && out.length() > 0) return@withContext out
         val tmp = File(ctx.cacheDir, "dl_${System.nanoTime()}")

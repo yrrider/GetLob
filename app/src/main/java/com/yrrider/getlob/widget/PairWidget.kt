@@ -82,19 +82,23 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
     // Defend against NaN or zero dimensions during initial widget placement
     val wDp = size.width.value.takeIf { !it.isNaN() && it > 10f } ?: 160f
     val hDp = size.height.value.takeIf { !it.isNaN() && it > 10f } ?: 160f
-    val wPx = (wDp * density).toInt().coerceIn(80, 400)
-    val hPx = (hDp * density).toInt().coerceIn(80, 400)
+    val rawW = (wDp * density).toInt().coerceAtLeast(80)
+    val rawH = (hDp * density).toInt().coerceAtLeast(80)
+    val maxSide = maxOf(rawW, rawH)
+    val scale = if (maxSide > 400) 400f / maxSide else 1f
+    val wPx = (rawW * scale).toInt().coerceAtLeast(80)
+    val hPx = (rawH * scale).toInt().coerceAtLeast(80)
 
     val open = actionStartActivity<OverlayActivity>()
     val animated = (s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) && s.frameCount > 1
 
-    // Decode still image
-    val still: Bitmap? = remember(s.updatedAt, wPx, hPx, s.fitCrop) {
-        if (!animated && s.posterPath.isNotEmpty()) ImageFit.decode(s.posterPath, wPx, hPx, s.fitCrop) else null
+    // Decode still image (suppressed during SOS so emergency alert is not obscured)
+    val still: Bitmap? = remember(s.updatedAt, wPx, hPx, s.fitCrop, s.kind) {
+        if (!animated && s.posterPath.isNotEmpty() && s.kind != MsgType.SOS) ImageFit.decode(s.posterPath, wPx, hPx, s.fitCrop) else null
     }
     // Animated flipper
-    val flipper: RemoteViews? = remember(s.updatedAt, wPx, hPx) {
-        if (animated) buildFlipper(ctx, s, wPx, hPx) else null
+    val flipper: RemoteViews? = remember(s.updatedAt, wPx, hPx, s.kind) {
+        if (animated && s.kind != MsgType.SOS) buildFlipper(ctx, s, wPx, hPx) else null
     }
 
     // Glass frosted background bitmap (compact size, capped to 400px to avoid IPC parcel limits)
@@ -102,9 +106,9 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
         WidgetRenderer.renderGlassBackground(ctx, wPx, hPx, settings, theme)
     }
 
-    // Typography Bitmap for text notes and moods
+    // Typography Bitmap for text notes, moods, and SOS
     val textBmp: Bitmap? = remember(s.updatedAt, s.text, s.kind, wPx, hPx, settings, theme) {
-        if (flipper == null && still == null) {
+        if (s.kind == MsgType.SOS || (flipper == null && still == null)) {
             WidgetRenderer.renderTextOrMoodBitmap(ctx, wPx, hPx, s, settings, theme)
         } else null
     }
@@ -124,8 +128,16 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
             modifier = GlanceModifier.fillMaxSize()
         )
 
-        // Layer 2: Clean content (Animated media, photo still, or text note)
+        // Layer 2: Clean content (Emergency SOS, Animated media, photo still, or text note)
         when {
+            s.kind == MsgType.SOS && textBmp != null -> {
+                Image(
+                    provider = ImageProvider(textBmp),
+                    contentDescription = "Emergency SOS",
+                    contentScale = ContentScale.Fit,
+                    modifier = GlanceModifier.fillMaxSize()
+                )
+            }
             flipper != null -> {
                 AndroidRemoteViews(remoteViews = flipper, modifier = GlanceModifier.fillMaxSize().clickable(open))
             }

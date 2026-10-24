@@ -9,7 +9,8 @@ const RETENTION_HOURS = 48;
  * older than 48 hours from Firebase Storage and Firestore.
  */
 exports.cleanupOldData = onSchedule("every 2 hours", async () => {
-  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - RETENTION_HOURS * 3600 * 1000);
+  const cutoffMillis = Date.now() - RETENTION_HOURS * 3600 * 1000;
+  const cutoffTimestamp = admin.firestore.Timestamp.fromMillis(cutoffMillis);
 
   // 1) Auto-delete expired media from Firebase Storage
   try {
@@ -17,7 +18,7 @@ exports.cleanupOldData = onSchedule("every 2 hours", async () => {
     const [files] = await bucket.getFiles({ prefix: "pairs/" });
     const expiredFiles = files.filter((f) => {
       const time = f.metadata && f.metadata.timeCreated ? new Date(f.metadata.timeCreated).getTime() : 0;
-      return time > 0 && time < cutoff;
+      return time > 0 && time < cutoffMillis;
     });
 
     if (expiredFiles.length > 0) {
@@ -31,12 +32,25 @@ exports.cleanupOldData = onSchedule("every 2 hours", async () => {
   // 2) Auto-delete expired messages from Firestore
   try {
     const db = admin.firestore();
-    const oldMessages = await db.collectionGroup("messages").where("createdAt", "<", cutoff).limit(500).get();
-    if (!oldMessages.empty) {
-      const batch = db.batch();
-      oldMessages.docs.forEach((d) => batch.delete(d.ref));
-      await batch.commit();
-      console.log(`Successfully deleted ${oldMessages.size} expired messages older than 48 hours.`);
+    const pairsSnap = await db.collection("pairs").get();
+    for (const pairDoc of pairsSnap.docs) {
+      const messagesRef = pairDoc.ref.collection("messages");
+      // Clean both Timestamp createdAt and legacy numeric createdAt
+      const [tsDocs, numDocs] = await Promise.all([
+        messagesRef.where("createdAt", "<", cutoffTimestamp).limit(250).get().catch(() => ({ docs: [] })),
+        messagesRef.where("createdAt", "<", cutoffMillis).limit(250).get().catch(() => ({ docs: [] })),
+      ]);
+
+      const toDelete = new Map();
+      tsDocs.docs.forEach((d) => toDelete.set(d.id, d.ref));
+      numDocs.docs.forEach((d) => toDelete.set(d.id, d.ref));
+
+      if (toDelete.size > 0) {
+        const batch = db.batch();
+        toDelete.forEach((ref) => batch.delete(ref));
+        await batch.commit();
+        console.log(`Pair ${pairDoc.id}: deleted ${toDelete.size} expired messages.`);
+      }
     }
   } catch (err) {
     console.error("Messages auto-delete error:", err);

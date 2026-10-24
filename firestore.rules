@@ -19,14 +19,16 @@ service cloud.firestore {
 
     match /pairs/{pairId} {
       allow read: if request.auth != null && (resource == null || request.auth.uid in resource.data.members);
-      // Pair members may save display settings and clear canvas
-      allow update: if request.auth != null && request.auth.uid in resource.data.members;
+      // Pair members may only save display settings and canvasClearedAt
+      allow update: if request.auth != null && request.auth.uid in resource.data.members &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['settings', 'canvasClearedAt']);
       allow create, delete: if false;
 
       match /messages/{id} {
         allow read, delete: if isMember(pairId);
         allow create: if isMember(pairId) &&
-          request.resource.data.from == request.auth.uid;
+          request.resource.data.from == request.auth.uid &&
+          (request.resource.data.createdAt == request.time || request.resource.data.createdAt is timestamp);
         allow update: if false;
       }
 

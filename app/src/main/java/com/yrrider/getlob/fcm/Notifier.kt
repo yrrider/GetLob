@@ -30,22 +30,12 @@ object Notifier {
             NotificationChannel(CH_PTT, "Push to talk", NotificationManager.IMPORTANCE_HIGH)
         )
 
-        val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-
         nm.createNotificationChannel(
             NotificationChannel(CH_SOS, "Urgent SOS Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
                 setBypassDnd(true)
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 600, 200, 600, 200, 600, 200, 800)
-                setSound(
-                    alarmUri,
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
+                setSound(null, null) // Silent channel so dedicated synthesized siren plays cleanly without clashing
             }
         )
     }

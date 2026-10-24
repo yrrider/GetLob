@@ -8,6 +8,8 @@ import android.media.AudioTrack
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -18,6 +20,8 @@ object AudioAlerts {
     private const val TAG = "AudioAlerts"
     private var sosRingtone: Ringtone? = null
     private var sosAudioTrack: AudioTrack? = null
+    private var sosTimeoutRunnable: Runnable? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
      * Triggers vibration for either a gentle Vibe pulse or urgent SOS alert.
@@ -160,6 +164,11 @@ object AudioAlerts {
             track.setLoopPoints(0, totalSamples, -1) // Loop siren
             track.play()
             sosAudioTrack = track
+
+            // Auto-stop siren after 45 seconds to protect battery & partner if phone is unattended
+            sosTimeoutRunnable = Runnable { stopSosSound() }.also {
+                mainHandler.postDelayed(it, 45_000)
+            }
             Log.i(TAG, "Playing dedicated SOS siren (useMediaStream=$useMedia)")
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to play synthesized SOS siren, falling back to Ringtone", e)
@@ -185,6 +194,8 @@ object AudioAlerts {
      */
     @Synchronized
     fun stopSosSound() {
+        sosTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        sosTimeoutRunnable = null
         try {
             sosAudioTrack?.apply {
                 if (playState == AudioTrack.PLAYSTATE_PLAYING) stop()

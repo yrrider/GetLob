@@ -20,7 +20,7 @@ data class WidgetSettings(
     val fontStyle: String = "Calligraphy",   // "Calligraphy", "Cursive", "Serif", "Modern"
     val fontColor: Long = 0xFFFFFFFFL,
     val bgTransparency: Float = 0.35f,       // 0.0f (transparent) to 1.0f (opaque)
-    val bgColor: Long = 0xFF000000L,         // Widget background color (ARGB)
+    val bgColor: Long = 0L,                  // Widget background color (ARGB), 0L = theme default
     val borderColor: Long = 0x80FFFFFFL,     // ARGB long
     val borderTransparency: Float = 1f,      // 0.0f = invisible, 1.0f = supplied color alpha
     val borderWidthDp: Float = 1.5f,
@@ -52,7 +52,7 @@ data class WidgetSettings(
                 fontStyle = (m["fontStyle"] as? String) ?: "Calligraphy",
                 fontColor = (m["fontColor"] as? Number)?.toLong() ?: 0xFFFFFFFFL,
                 bgTransparency = (m["bgTransparency"] as? Number)?.toFloat() ?: 0.35f,
-                bgColor = (m["bgColor"] as? Number)?.toLong() ?: 0xFF000000L,
+                bgColor = (m["bgColor"] as? Number)?.toLong() ?: 0L,
                 borderColor = (m["borderColor"] as? Number)?.toLong() ?: 0x80FFFFFFL,
                 borderTransparency = (m["borderTransparency"] as? Number)?.toFloat()?.coerceIn(0f, 1f) ?: 1f,
                 borderWidthDp = (m["borderWidthDp"] as? Number)?.toFloat() ?: 1.5f,
@@ -118,7 +118,7 @@ object LocalStore {
             fontStyle = p.getString("fontStyle", "Calligraphy") ?: "Calligraphy",
             fontColor = p.getLong("fontColor", 0xFFFFFFFFL),
             bgTransparency = p.getFloat("bgTransparency", 0.35f),
-            bgColor = p.getLong("bgColor", 0xFF000000L),
+            bgColor = p.getLong("bgColor", 0L),
             borderColor = p.getLong("borderColor", 0x80FFFFFFL),
             borderTransparency = p.getFloat("borderTransparency", 1f).coerceIn(0f, 1f),
             borderWidthDp = p.getFloat("borderWidthDp", 1.5f),
@@ -151,6 +151,11 @@ object LocalStore {
             .putInt("corner", s.cornerDp)
             .apply()
         prefs(c).edit().putBoolean("fitCrop", s.fitCrop).apply()
+    }
+
+    fun getLastClearedAt(c: Context): Long = prefs(c).getLong("lastClearedAt", 0L)
+    fun setLastClearedAt(c: Context, timestamp: Long) {
+        prefs(c).edit().putLong("lastClearedAt", timestamp).apply()
     }
 
     var Context.pairId: String

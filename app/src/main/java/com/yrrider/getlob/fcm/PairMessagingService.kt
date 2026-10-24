@@ -47,8 +47,11 @@ class PairMessagingService : FirebaseMessagingService() {
                 AudioAlerts.vibrateLiveInvite(ctx)
             }
 
-            runCatching { MediaProcessor.apply(ctx, m) }
+            // 1. Show notification and vibrate immediately - do not block on media downloads
             Notifier.show(ctx, m)
+
+            // 2. Process media and update widget in background
+            runCatching { MediaProcessor.apply(ctx, m) }
         }
     }
 }

@@ -1,20 +1,21 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
+const crypto = require("crypto");
 
 admin.initializeApp();
 const db = admin.firestore();
 
-/** Generates a 6-character random alphanumeric code. */
+/** Generates a 6-character cryptographically secure random alphanumeric code. */
 function randomCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s = "";
-  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 6; i++) s += chars[crypto.randomInt(0, chars.length)];
   return s;
 }
 
 /**
- * Creates a pending pair invite.
+ * Creates a pending pair invite with 24-hour expiration.
  * Returns { code, pairId }.
  */
 exports.createPair = onCall(async (req) => {
@@ -27,6 +28,8 @@ exports.createPair = onCall(async (req) => {
     const pairRef = db.collection("pairs").doc();
     const inviteRef = db.collection("invites").doc(code);
     const userRef = db.collection("users").doc(uid);
+    const expiresAt = Date.now() + 24 * 3600 * 1000; // 24 hour expiry
+
     const result = await db.runTransaction(async (tx) => {
       const [invite, user] = await Promise.all([tx.get(inviteRef), tx.get(userRef)]);
       if (invite.exists) return null;
@@ -38,7 +41,7 @@ exports.createPair = onCall(async (req) => {
         if (oldCode) tx.delete(db.collection("invites").doc(oldCode));
       }
       tx.set(pairRef, { members: [uid], createdAt: Date.now(), code });
-      tx.set(inviteRef, { pairId: pairRef.id, createdAt: Date.now() });
+      tx.set(inviteRef, { pairId: pairRef.id, createdAt: Date.now(), expiresAt });
       tx.set(userRef, { pairId: pairRef.id }, { merge: true });
       return { code, pairId: pairRef.id };
     });
@@ -49,21 +52,41 @@ exports.createPair = onCall(async (req) => {
 
 /**
  * Joins an existing pair via a 6-character code.
- * Adds the caller to the pair's members.
+ * Adds the caller to the pair's members with expiry and rate-limit checks.
  */
 exports.joinPair = onCall(async (req) => {
   const uid = req.auth && req.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
 
-  const code = String(req.data.code || "").trim().toUpperCase();
+  const code = String((req.data && req.data.code) || "").trim().toUpperCase();
+  if (!code || code.length < 6) throw new HttpsError("invalid-argument", "Invalid invite code");
+
   const inviteRef = db.collection("invites").doc(code);
   const userRef = db.collection("users").doc(uid);
   return db.runTransaction(async (tx) => {
-    const invite = await tx.get(inviteRef);
-    if (!invite.exists) throw new HttpsError("not-found", "Invalid or expired code");
+    const [invite, user] = await Promise.all([tx.get(inviteRef), tx.get(userRef)]);
+
+    // Basic rate limit check
+    const failedAttempts = (user.exists && user.get("failedJoinAttempts")) || 0;
+    const lastAttempt = (user.exists && user.get("lastJoinAttempt")) || 0;
+    if (failedAttempts >= 5 && Date.now() - lastAttempt < 60 * 1000) {
+      throw new HttpsError("resource-exhausted", "Too many failed attempts. Please wait 1 minute.");
+    }
+
+    if (!invite.exists) {
+      tx.set(userRef, { failedJoinAttempts: failedAttempts + 1, lastJoinAttempt: Date.now() }, { merge: true });
+      throw new HttpsError("not-found", "Invalid or expired code");
+    }
+
+    const expiresAt = invite.get("expiresAt");
+    if (expiresAt && expiresAt < Date.now()) {
+      tx.delete(inviteRef);
+      throw new HttpsError("failed-precondition", "Invite code has expired. Please request a new code.");
+    }
+
     const pairId = invite.get("pairId");
     const pairRef = db.collection("pairs").doc(pairId);
-    const [pair, user] = await Promise.all([tx.get(pairRef), tx.get(userRef)]);
+    const pair = await tx.get(pairRef);
     if (!pair.exists) throw new HttpsError("not-found", "Pair not found");
     const members = pair.get("members") || [];
     if (members.length >= 2 && !members.includes(uid)) {
@@ -77,7 +100,7 @@ exports.joinPair = onCall(async (req) => {
       if (oldCode) tx.delete(db.collection("invites").doc(oldCode));
     }
     tx.update(pairRef, { members: admin.firestore.FieldValue.arrayUnion(uid) });
-    tx.set(userRef, { pairId }, { merge: true });
+    tx.set(userRef, { pairId, failedJoinAttempts: 0 }, { merge: true });
     tx.delete(inviteRef);
     return { pairId };
   });

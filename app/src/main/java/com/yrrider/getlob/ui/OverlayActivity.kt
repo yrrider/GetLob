@@ -24,6 +24,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -318,6 +320,7 @@ private fun OverlayRoot(
                         // Google widget overlay style: Single horizontal row of colourful minimalistic round icons
                         Mode.MENU -> {
                             Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -342,7 +345,14 @@ private fun OverlayRoot(
                                     onClick = { mode = Mode.TEXT }
                                 )
 
-                                // 4. Tap to talk (Live Talk)
+                                // 4. Voice Note
+                                MinimalRoundIcon(
+                                    emoji = "🎙️",
+                                    gradient = listOf(Color(0xFF6366F1), Color(0xFF4F46E5)),
+                                    onClick = { mode = Mode.VOICE }
+                                )
+
+                                // 5. Tap to talk (Live Talk)
                                 MinimalRoundIcon(
                                     emoji = "📡",
                                     gradient = listOf(Color(0xFF06B6D4), Color(0xFF3B82F6)),
@@ -356,7 +366,14 @@ private fun OverlayRoot(
                                     }
                                 )
 
-                                // 5. Vibe (Haptic pulse)
+                                // 6. Tic-Tac-Toe Game
+                                MinimalRoundIcon(
+                                    emoji = "🎮",
+                                    gradient = listOf(Color(0xFF14B8A6), Color(0xFF0D9488)),
+                                    onClick = { mode = Mode.GAME }
+                                )
+
+                                // 7. Vibe (Haptic pulse)
                                 MinimalRoundIcon(
                                     emoji = "📳",
                                     gradient = listOf(Color(0xFF10B981), Color(0xFF059669)),
@@ -366,7 +383,7 @@ private fun OverlayRoot(
                                     }
                                 )
 
-                                // 6. SOS
+                                // 8. SOS
                                 MinimalRoundIcon(
                                     emoji = "🆘",
                                     gradient = listOf(Color(0xFFEF4444), Color(0xFFB91C1C)),
@@ -462,6 +479,7 @@ private fun OverlayRoot(
                                     Spacer(Modifier.height(10.dp))
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         TextButton({
+                                            if (pendingPhotoFile?.name?.startsWith("snap_") == true) pendingPhotoFile?.delete()
                                             pendingPhotoFile = null
                                             photoCaption = ""
                                             mode = Mode.MENU
@@ -472,7 +490,8 @@ private fun OverlayRoot(
                                             onClick = {
                                                 val fileToSend = file
                                                 val caption = photoCaption.trim()
-                                                pendingPhotoFile = null
+                                                if (pendingPhotoFile?.name?.startsWith("snap_") == true) pendingPhotoFile?.delete()
+                                            pendingPhotoFile = null
                                                 photoCaption = ""
                                                 job {
                                                     val finalFile = withContext(Dispatchers.IO) {
@@ -498,6 +517,8 @@ private fun OverlayRoot(
                                                     }
                                                     val url = Repo.upload(ctx, finalFile, "jpg")
                                                     sendAndShow(Message(type = MsgType.IMAGE, mediaUrl = url, text = caption))
+                                                    if (finalFile != fileToSend) finalFile.delete()
+                                                    if (fileToSend.name.startsWith("snap_")) fileToSend.delete()
                                                 }
                                             },
                                             shape = RoundedCornerShape(12.dp),

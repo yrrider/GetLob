@@ -13,5 +13,5 @@ dependencyResolutionManagement {
         maven { url = java.net.URI("https://jitpack.io") }
     }
 }
-rootProject.name = "PairWidget"
+rootProject.name = "GetLob"
 include(":app")
