@@ -53,16 +53,6 @@ object WidgetRenderer {
         }
     }
 
-    /**
-     * Renders a single composite bitmap containing:
-     *  - Frosted glass background & specular gradient
-     *  - Photo still (fit/crop, clipped to rounded corners) OR typography (text note / emoji / SOS / welcome)
-     *  - Frosted sheen reflection
-     *  - Crisp glass border and top rim specular highlight
-     *
-     * Capped to MAX_DIM (280px) to guarantee the entire RemoteViews parcel stays well below
-     * Android's 1MB Binder transaction limit, eradicating "Can't show content" errors on all devices.
-     */
     fun renderCompositeWidget(
         ctx: Context,
         rawW: Int,
@@ -84,7 +74,6 @@ object WidgetRenderer {
         val inset = strokeWidthPx / 2f
         val rect = RectF(inset, inset, wPx - inset, hPx - inset)
 
-        // 1. Frosted Glass / Theme Background Fill
         val alphaInt = (settings.bgTransparency.coerceIn(0.05f, 1f) * 255).toInt()
         val baseColor = if (settings.bgColor != 0L) settings.bgColor.toInt() else theme.bg.toInt()
 
@@ -107,7 +96,6 @@ object WidgetRenderer {
             canvas.drawRoundRect(rect, cornerPx, cornerPx, fillPaint)
         }
 
-        // 2. Content: Photo Still OR Typography (SOS, Mood, Text Note, Welcome)
         val hasStill = s.posterPath.isNotEmpty() && s.kind != MsgType.SOS
         var drewPhoto = false
         if (hasStill) {
@@ -134,7 +122,6 @@ object WidgetRenderer {
             drawContentText(canvas, ctx, wPx, hPx, s, settings, theme, density)
         }
 
-        // 3. Frosted Glass Sheen Reflection (upper half)
         if (settings.glassEffect) {
             val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.FILL
@@ -148,7 +135,6 @@ object WidgetRenderer {
             canvas.drawRoundRect(rect, cornerPx, cornerPx, sheenPaint)
         }
 
-        // 4. Crisp Border & Beveled Top Highlight
         if (strokeWidthPx > 0f && settings.borderColor != 0L) {
             val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE

@@ -25,17 +25,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/**
- * Modern neon heart loading animation:
- * A brilliant electric neon light races continuously around a glowing heart contour,
- * leaving an ethereal trailing halo and a radiant glowing head.
- */
 @Composable
 fun NeonHeartLoader(
     modifier: Modifier = Modifier,
     size: Dp = 64.dp,
-    neonColor: Color = Color(0xFFFF2A85), // Neon hot pink
-    glowColor: Color = Color(0xFF38BDF8), // Electric cyan
+    neonColor: Color = Color(0xFFFF2A85),
+    glowColor: Color = Color(0xFF38BDF8),
 ) {
     val transition = rememberInfiniteTransition(label = "NeonHeartLoop")
     val progress by transition.animateFloat(
@@ -63,18 +58,17 @@ fun NeonHeartLoader(
             val w = this.size.width
             val h = this.size.height
 
-            // 1. Construct a smooth, continuous closed heart path
             val heartPath = Path().apply {
                 val startX = w * 0.5f
                 val startY = h * 0.28f
                 moveTo(startX, startY)
-                // Left curve down to bottom tip
+
                 cubicTo(
                     w * 0.12f, h * -0.06f,
                     -w * 0.08f, h * 0.45f,
                     w * 0.5f, h * 0.94f
                 )
-                // Right curve back up to top cleft
+
                 cubicTo(
                     w * 1.08f, h * 0.45f,
                     w * 0.88f, h * -0.06f,
@@ -89,7 +83,6 @@ fun NeonHeartLoader(
 
             val strokeWidth = (w * 0.075f).coerceIn(2.5f, 7f)
 
-            // 2. Draw soft ambient base track
             drawPath(
                 path = heartPath,
                 color = neonColor.copy(alpha = 0.16f),
@@ -100,7 +93,6 @@ fun NeonHeartLoader(
                 )
             )
 
-            // 3. Compute glowing neon comet tail segment
             val tailLen = totalLen * 0.38f
             val headDist = (progress * totalLen) % totalLen
             val tailDist = headDist - tailLen
@@ -115,7 +107,6 @@ fun NeonHeartLoader(
                 segmentPath.addPath(wrapSegment)
             }
 
-            // Outer neon bloom halo
             drawPath(
                 path = segmentPath,
                 color = neonColor.copy(alpha = 0.35f * pulse),
@@ -126,7 +117,6 @@ fun NeonHeartLoader(
                 )
             )
 
-            // Secondary cyan halo
             drawPath(
                 path = segmentPath,
                 color = glowColor.copy(alpha = 0.55f),
@@ -137,7 +127,6 @@ fun NeonHeartLoader(
                 )
             )
 
-            // Sharp core neon beam
             drawPath(
                 path = segmentPath,
                 brush = Brush.radialGradient(
@@ -152,22 +141,21 @@ fun NeonHeartLoader(
                 )
             )
 
-            // 4. Glowing comet head dot at current position
             val headPos = pm.getPosition(headDist)
             if (headPos != Offset.Unspecified) {
-                // Wide soft halo around head
+
                 drawCircle(
                     color = glowColor.copy(alpha = 0.6f),
                     radius = strokeWidth * 2.2f * pulse,
                     center = headPos
                 )
-                // Intense bright neon head
+
                 drawCircle(
                     color = neonColor,
                     radius = strokeWidth * 1.3f,
                     center = headPos
                 )
-                // White incandescent spark at the center of the head
+
                 drawCircle(
                     color = Color.White,
                     radius = strokeWidth * 0.65f,

@@ -2,7 +2,6 @@ package com.yrrider.getlob.data
 
 import com.google.firebase.firestore.DocumentSnapshot
 
-/** Message types that travel between the two devices. */
 object MsgType {
     const val TEXT = "text"
     const val EMOJI = "emoji"
@@ -10,11 +9,11 @@ object MsgType {
     const val GIF = "gif"
     const val VIDEO = "video"
     const val VOICE = "voice"
-    const val PTT = "ptt"      // push-to-talk clip: triggers a "Tap to listen" notification
-    const val LIVE = "live"    // tap to talk live invitation
+    const val PTT = "ptt"
+    const val LIVE = "live"
     const val VIBE = "vibe"
     const val SOS = "sos"
-    const val GAME = "game"    // "your turn" ping
+    const val GAME = "game"
 }
 
 data class Message(
@@ -24,14 +23,20 @@ data class Message(
     val mediaUrl: String = "",
     val from: String = "",
     val createdAt: Long = System.currentTimeMillis(),
+    val replyToId: String = "",
+    val replyText: String = "",
+    val replySender: String = "",
 ) {
-    fun toMap(): Map<String, Any> = mapOf(
-        "type" to type,
-        "text" to text,
-        "mediaUrl" to mediaUrl,
-        "from" to from,
-        "createdAt" to createdAt,
-    )
+    fun toMap(): Map<String, Any> = buildMap {
+        put("type", type)
+        put("text", text)
+        put("mediaUrl", mediaUrl)
+        put("from", from)
+        put("createdAt", createdAt)
+        if (replyToId.isNotEmpty()) put("replyToId", replyToId)
+        if (replyText.isNotEmpty()) put("replyText", replyText)
+        if (replySender.isNotEmpty()) put("replySender", replySender)
+    }
 
     companion object {
         fun fromDoc(d: DocumentSnapshot) = Message(
@@ -41,9 +46,11 @@ data class Message(
             mediaUrl = d.getString("mediaUrl") ?: "",
             from = d.getString("from") ?: "",
             createdAt = d.getTimestamp("createdAt")?.toDate()?.time ?: d.getLong("createdAt") ?: 0L,
+            replyToId = d.getString("replyToId") ?: "",
+            replyText = d.getString("replyText") ?: "",
+            replySender = d.getString("replySender") ?: "",
         )
 
-        /** Builds a Message from an FCM data payload (all values are strings). */
         fun fromFcm(m: Map<String, String>) = Message(
             id = m["msgId"] ?: "",
             type = m["type"] ?: MsgType.TEXT,
@@ -51,15 +58,17 @@ data class Message(
             mediaUrl = m["mediaUrl"] ?: "",
             from = m["senderUid"] ?: m["from"] ?: "",
             createdAt = m["createdAt"]?.toLongOrNull() ?: System.currentTimeMillis(),
+            replyToId = m["replyToId"] ?: "",
+            replyText = m["replyText"] ?: "",
+            replySender = m["replySender"] ?: "",
         )
     }
 }
 
-/** Tic-tac-toe state stored in pairs/{pairId}/games/current */
 data class GameState(
     val board: String = "---------",
     val turn: String = "",
     val x: String = "",
     val o: String = "",
-    val winner: String = "",   // "", "X", "O", "draw"
+    val winner: String = "",
 )

@@ -10,6 +10,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.Image
@@ -27,6 +29,7 @@ import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
+import androidx.glance.currentState
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
@@ -52,14 +55,6 @@ import com.yrrider.getlob.ui.OverlayActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * Glance home-screen widget. Displays:
- *  - Single composite frosted glass UI bitmap (under 300KB to guarantee 0 Binder IPC crashes on all devices)
- *  - Crisp still photos (crop/fit)
- *  - Lightweight looping animated slideshow (max 3 frames)
- *  - Text notes & Mood emojis with Cursive / Calligraphy typography
- *  - Built-in graceful error fallback via onCompositionError
- */
 class PairWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = PairWidget()
 }
@@ -69,11 +64,13 @@ class PairWidget : GlanceAppWidget(errorUiLayout = R.layout.widget_loading) {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
+            val prefs = currentState<Preferences>()
+            val tick = prefs[longPreferencesKey("update_tick")] ?: 0L
             val ctx = LocalContext.current
             val state = LocalStore.read(ctx)
             val settings = LocalStore.readSettings(ctx)
             val theme = WidgetThemes.theme(ctx)
-            WidgetContent(state, settings, theme)
+            WidgetContent(state, settings, theme, tick)
         }
     }
 
@@ -92,12 +89,11 @@ class PairWidget : GlanceAppWidget(errorUiLayout = R.layout.widget_loading) {
 }
 
 @Composable
-private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: WidgetTheme) {
+private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: WidgetTheme, tick: Long) {
     val ctx = LocalContext.current
     val size = LocalSize.current
     val density = ctx.resources.displayMetrics.density
 
-    // Defend against NaN or zero dimensions during initial widget placement
     val wDp = size.width.value.takeIf { !it.isNaN() && it > 10f } ?: 160f
     val hDp = size.height.value.takeIf { !it.isNaN() && it > 10f } ?: 160f
     val rawW = (wDp * density).toInt().coerceAtLeast(80)
@@ -106,16 +102,13 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
     val open = actionStartActivity<OverlayActivity>()
     val animated = (s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) && s.frameCount > 1
 
-    // Single composite bitmap: frosted background + still/typography + border
-    // Memory footprint is ~270 KB, guaranteed under Android 1MB binder limit!
-    val compositeBmp: Bitmap? = remember(s.updatedAt, s.posterPath, s.text, s.kind, rawW, rawH, s.fitCrop, settings, theme) {
+    val compositeBmp: Bitmap? = remember(tick, s.updatedAt, s.posterPath, s.text, s.kind, rawW, rawH, s.fitCrop, settings, theme) {
         if (!animated || s.kind == MsgType.SOS) {
             WidgetRenderer.renderCompositeWidget(ctx, rawW, rawH, s, settings, theme)
         } else null
     }
 
-    // Animated slideshow with strictly capped frames (max 3 frames, 180x180 = ~150KB total)
-    val flipper: RemoteViews? = remember(s.updatedAt, rawW, rawH, s.kind) {
+    val flipper: RemoteViews? = remember(tick, s.updatedAt, rawW, rawH, s.kind) {
         if (animated && s.kind != MsgType.SOS) buildFlipper(ctx, s, rawW, rawH) else null
     }
 
@@ -136,7 +129,6 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
             )
         }
 
-        // Minimal indicator in corner for animations
         if (animated || s.kind == MsgType.GIF || s.kind == MsgType.VIDEO) {
             Box(
                 modifier = GlanceModifier

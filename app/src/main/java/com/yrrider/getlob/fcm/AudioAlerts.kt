@@ -23,11 +23,6 @@ object AudioAlerts {
     private var sosTimeoutRunnable: Runnable? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /**
-     * Triggers vibration for either a gentle Vibe pulse or urgent SOS alert.
-     * Uses VibratorManager on Android 12+ (API 31+) and sets appropriate Audio/Vibration attributes
-     * so vibration triggers reliably even in background or with touch haptics turned off.
-     */
     fun vibrate(ctx: Context, isSos: Boolean) {
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -43,7 +38,6 @@ object AudioAlerts {
                 return
             }
 
-            // Patterns: {delay, vibrate, pause, vibrate, pause, vibrate...}
             val pattern = if (isSos) {
                 longArrayOf(0, 600, 200, 600, 200, 600, 200, 800)
             } else {
@@ -84,9 +78,6 @@ object AudioAlerts {
         }
     }
 
-    /**
-     * Distinct vibrating pulse sequence when partner sends a Live Talk invitation.
-     */
     fun vibrateLiveInvite(ctx: Context) {
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -110,11 +101,6 @@ object AudioAlerts {
         }
     }
 
-    /**
-     * Plays the dedicated SOS emergency siren sound.
-     * Uses media sound volume of the remote device; if media is muted (volume == 0),
-     * falls back to the alarm sound volume so it is guaranteed to ring loudly.
-     */
     @Synchronized
     fun playSosSound(ctx: Context) {
         stopSosSound()
@@ -129,7 +115,6 @@ object AudioAlerts {
             val totalSamples = numSamplesPerTone * 2
             val pcmData = ShortArray(totalSamples)
 
-            // High-low alternating emergency siren (920 Hz / 640 Hz)
             val freq1 = 920.0
             val freq2 = 640.0
             for (i in 0 until numSamplesPerTone) {
@@ -161,11 +146,10 @@ object AudioAlerts {
                 .build()
 
             track.write(pcmData, 0, totalSamples)
-            track.setLoopPoints(0, totalSamples, -1) // Loop siren
+            track.setLoopPoints(0, totalSamples, -1)
             track.play()
             sosAudioTrack = track
 
-            // Auto-stop siren after 45 seconds to protect battery & partner if phone is unattended
             sosTimeoutRunnable = Runnable { stopSosSound() }.also {
                 mainHandler.postDelayed(it, 45_000)
             }
@@ -189,9 +173,6 @@ object AudioAlerts {
         }
     }
 
-    /**
-     * Stops the SOS alarm sound.
-     */
     @Synchronized
     fun stopSosSound() {
         sosTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }

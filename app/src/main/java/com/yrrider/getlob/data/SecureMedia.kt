@@ -11,9 +11,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
 
-/** Downloads media and decrypts it (if needed) into the cache so players and image loaders can use it. */
+
 object SecureMedia {
-    /** Purges temporary and decrypted files in cache older than 24 hours to prevent cache leaks. */
+
     fun purgeOldCache(ctx: Context) {
         val cutoff = System.currentTimeMillis() - 24 * 3600 * 1000L
         ctx.cacheDir?.listFiles()?.forEach { file ->
@@ -49,17 +49,15 @@ object SecureMedia {
         out
     }
 
-    /** Download to a specific file name (used by the widget pipeline). */
+
     suspend fun fetchTo(ctx: Context, url: String, name: String): File {
         val dec = fetch(ctx, url)
         return File(ctx.cacheDir, name).also { dec.copyTo(it, overwrite = true) }
     }
 }
 
-/**
- * Model for Coil / players: the plain URL when unencrypted (streams directly),
- * or a decrypted local File when the media is encrypted. Null while loading or on failure.
- */
+
+
 @Composable
 fun rememberMedia(url: String): Any? {
     val ctx = LocalContext.current

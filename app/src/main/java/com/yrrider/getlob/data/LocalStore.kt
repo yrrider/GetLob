@@ -3,28 +3,36 @@ package com.yrrider.getlob.data
 import android.content.Context
 import java.io.File
 
-/** What the widget currently shows. Persisted locally so the widget renders with no network. */
 data class WidgetState(
-    val kind: String = "",          // "", text, emoji, image, gif, video, voice, sos, game
+    val kind: String = "",
     val text: String = "",
-    val posterPath: String = "",    // scaled still (image, or first frame of gif/video)
-    val frameCount: Int = 0,        // >0 => animated slideshow frames exist
-    val mediaUrl: String = "",      // for playing gif/video/voice in the overlay
-    val fitCrop: Boolean = true,    // true = fill (crop), false = fit (letterbox)
+    val posterPath: String = "",
+    val frameCount: Int = 0,
+    val mediaUrl: String = "",
+    val fitCrop: Boolean = true,
     val updatedAt: Long = 0L,
 )
 
-/** User customizable widget appearance & shared partner settings. Synced between both devices. */
+data class ChatSettings(
+    val wallpaperColor: Long = 0xFF0B141BL,
+    val myBubbleColor: Long = 0xFF005C4BL,
+    val partnerBubbleColor: Long = 0xFF202C33L,
+    val messageFontSize: Int = 15,
+    val bubbleCornerDp: Int = 14,
+    val fontStyle: String = "Modern",
+    val swipeToReplyEnabled: Boolean = true
+)
+
 data class WidgetSettings(
     val partnerName: String = "Partner",
-    val fontStyle: String = "Calligraphy",   // "Calligraphy", "Cursive", "Serif", "Modern"
+    val fontStyle: String = "Calligraphy",
     val fontColor: Long = 0xFFFFFFFFL,
-    val bgTransparency: Float = 0.35f,       // 0.0f (transparent) to 1.0f (opaque)
-    val bgColor: Long = 0L,                  // Widget background color (ARGB), 0L = theme default
-    val borderColor: Long = 0x80FFFFFFL,     // ARGB long
-    val borderTransparency: Float = 1f,      // 0.0f = invisible, 1.0f = supplied color alpha
+    val bgTransparency: Float = 0.35f,
+    val bgColor: Long = 0L,
+    val borderColor: Long = 0x80FFFFFFL,
+    val borderTransparency: Float = 1f,
     val borderWidthDp: Float = 1.5f,
-    val glassEffect: Boolean = true,         // Frosted glass specular gradient and highlight
+    val glassEffect: Boolean = true,
     val themeIndex: Int = 0,
     val cornerDp: Int = 26,
     val fitCrop: Boolean = true,
@@ -68,9 +76,11 @@ data class WidgetSettings(
 object LocalStore {
     private const val P = "pairwidget"
     private const val P_SETTINGS = "widget_settings"
+    private const val P_CHAT = "chat_settings"
 
     private fun prefs(c: Context) = c.getSharedPreferences(P, Context.MODE_PRIVATE)
     private fun settingsPrefs(c: Context) = c.getSharedPreferences(P_SETTINGS, Context.MODE_PRIVATE)
+    private fun chatPrefs(c: Context) = c.getSharedPreferences(P_CHAT, Context.MODE_PRIVATE)
 
     fun framesDir(c: Context) = File(c.filesDir, "frames").apply { mkdirs() }
     fun frameFile(c: Context, i: Int) = File(framesDir(c), "f$i.jpg")
@@ -96,6 +106,7 @@ object LocalStore {
             .putString("poster", s.posterPath)
             .putInt("frames", s.frameCount)
             .putString("mediaUrl", s.mediaUrl)
+            .putBoolean("fitCrop", s.fitCrop)
             .putLong("updatedAt", System.currentTimeMillis())
             .commit()
     }
@@ -145,7 +156,6 @@ object LocalStore {
             .putBoolean("fitCrop", s.fitCrop)
             .commit()
 
-        // Keep widget_style prefs in sync for legacy readers
         c.getSharedPreferences("widget_style", Context.MODE_PRIVATE).edit()
             .putInt("theme", s.themeIndex)
             .putInt("corner", s.cornerDp)
@@ -153,12 +163,47 @@ object LocalStore {
         prefs(c).edit().putBoolean("fitCrop", s.fitCrop).apply()
     }
 
+    fun readChatSettings(c: Context): ChatSettings {
+        val p = chatPrefs(c)
+        return ChatSettings(
+            wallpaperColor = p.getLong("wallpaperColor", 0xFF0B141BL),
+            myBubbleColor = p.getLong("myBubbleColor", 0xFF005C4BL),
+            partnerBubbleColor = p.getLong("partnerBubbleColor", 0xFF202C33L),
+            messageFontSize = p.getInt("messageFontSize", 15),
+            bubbleCornerDp = p.getInt("bubbleCornerDp", 14),
+            fontStyle = p.getString("fontStyle", "Modern") ?: "Modern",
+            swipeToReplyEnabled = p.getBoolean("swipeToReplyEnabled", true)
+        )
+    }
+
+    fun writeChatSettings(c: Context, s: ChatSettings) {
+        chatPrefs(c).edit()
+            .putLong("wallpaperColor", s.wallpaperColor)
+            .putLong("myBubbleColor", s.myBubbleColor)
+            .putLong("partnerBubbleColor", s.partnerBubbleColor)
+            .putInt("messageFontSize", s.messageFontSize)
+            .putInt("bubbleCornerDp", s.bubbleCornerDp)
+            .putString("fontStyle", s.fontStyle)
+            .putBoolean("swipeToReplyEnabled", s.swipeToReplyEnabled)
+            .apply()
+    }
+
     fun getLastClearedAt(c: Context): Long = prefs(c).getLong("lastClearedAt", 0L)
     fun setLastClearedAt(c: Context, timestamp: Long) {
         prefs(c).edit().putLong("lastClearedAt", timestamp).apply()
     }
 
-val DEFAULT_MOODS = listOf(
+    fun pairedAt(c: Context): Long = prefs(c).getLong("pairedAt", 0L)
+    fun setPairedAt(c: Context, timestamp: Long) {
+        if (timestamp > 0L) {
+            val existing = pairedAt(c)
+            if (existing == 0L || timestamp < existing) {
+                prefs(c).edit().putLong("pairedAt", timestamp).apply()
+            }
+        }
+    }
+
+    val DEFAULT_MOODS = listOf(
         "❤️" to "Love",
         "😊" to "Happy",
         "🥺" to "Miss You",
@@ -229,4 +274,36 @@ val DEFAULT_MOODS = listOf(
     var Context.pairCode: String
         get() = pairCode(this)
         set(v) { prefs(this).edit().putString("pairCode", v).apply() }
+
+    fun appUuid(c: Context): String {
+        val p = prefs(c)
+        var uuid = p.getString("app_uuid", null)
+        if (uuid.isNullOrBlank()) {
+            uuid = java.util.UUID.randomUUID().toString()
+            p.edit().putString("app_uuid", uuid).commit()
+        }
+        return uuid
+    }
+
+    fun clearAllData(c: Context) {
+        val uuid = appUuid(c)
+        runCatching { posterFile(c).delete() }
+        runCatching { framesDir(c).deleteRecursively() }
+        runCatching {
+            c.cacheDir.listFiles()?.forEach { file ->
+                if (file.name.startsWith("snap_") || file.name.startsWith("up_") || file.name.startsWith("enc_")) {
+                    file.delete()
+                }
+            }
+        }
+
+        prefs(c).edit().clear().putString("app_uuid", uuid).commit()
+        settingsPrefs(c).edit().clear().commit()
+        chatPrefs(c).edit().clear().commit()
+        c.getSharedPreferences("crypto", Context.MODE_PRIVATE).edit().clear().commit()
+        c.getSharedPreferences("profile", Context.MODE_PRIVATE).edit().clear().commit()
+        c.getSharedPreferences("widget_style", Context.MODE_PRIVATE).edit().clear().commit()
+
+        write(c, WidgetState())
+    }
 }

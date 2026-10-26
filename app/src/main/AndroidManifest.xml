@@ -31,6 +31,7 @@
 
         <activity
             android:name=".ui.MainActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -38,7 +39,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Floating panel shown when the widget is tapped. No app UI. -->
         <activity
             android:name=".ui.OverlayActivity"
             android:exported="false"
@@ -47,7 +47,6 @@
             android:launchMode="singleInstance"
             android:theme="@style/Theme.Overlay" />
 
-        <!-- Live walkie-talkie panel. Opened from the widget button or the "Tap to talk" notification. -->
         <activity
             android:name=".ui.LiveTalkActivity"
             android:exported="false"
@@ -62,7 +61,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Widget customisation screen -->
         <activity
             android:name=".widget.WidgetConfigActivity"
             android:exported="true">
@@ -71,7 +69,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Home-screen widget -->
         <receiver
             android:name=".widget.PairWidgetReceiver"
             android:exported="true">
@@ -83,7 +80,6 @@
                 android:resource="@xml/pair_widget_info" />
         </receiver>
 
-        <!-- Push messages (sync, PTT alerts, SOS, vibe) -->
         <service
             android:name=".fcm.PairMessagingService"
             android:exported="false">

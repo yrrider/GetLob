@@ -15,15 +15,11 @@ android {
         versionCode = 4
         versionName = "0.4"
 
-        ndk {
-            // Include 64-bit and 32-bit ARM for real phones (strips x86 emulator bloat)
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-        }
     }
 
     buildTypes {
         debug {
-            // Keep debug builds clean with standard debug configuration to prevent R8 stripping Compose & reflection
+
             isMinifyEnabled = false
             isShrinkResources = false
         }
@@ -42,8 +38,8 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = true
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = false
         }
     }
 
@@ -62,7 +58,7 @@ android {
 }
 
 dependencies {
-    // Compose
+
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
@@ -71,11 +67,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     implementation("androidx.core:core-ktx:1.13.1")
 
-    // Glance (home-screen widget)
+
     implementation("androidx.glance:glance-appwidget:1.1.0")
     implementation("androidx.glance:glance-material3:1.1.0")
 
-    // Firebase
+
     implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-firestore-ktx")
@@ -84,11 +80,11 @@ dependencies {
     implementation("com.google.firebase:firebase-functions-ktx")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
-    // Images / GIF / video frames in the in-app UI
+
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-gif:2.6.0")
     implementation("io.coil-kt:coil-video:2.6.0")
 
-    // Live push-to-talk (WebRTC)
+
     implementation("io.livekit:livekit-android:2.5.0")
 }

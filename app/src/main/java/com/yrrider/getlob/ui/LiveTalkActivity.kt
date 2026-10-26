@@ -1,17 +1,17 @@
 package com.yrrider.getlob.ui
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.PowerManager
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -22,9 +22,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -35,27 +35,11 @@ import com.yrrider.getlob.data.Repo
 import io.livekit.android.LiveKit
 import io.livekit.android.RoomOptions
 import io.livekit.android.e2ee.E2EEOptions
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.flow.collect
+import io.livekit.android.room.Room
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Live walkie-talkie over WebRTC (LiveKit), end-to-end encrypted when a passphrase is set.
- *
- *  - Opened from the widget's satellite button: joins the pair's room and sends a "live" alert
- *    so the partner's phone shows "Tap to talk".
- *  - Opened from that notification (action OPEN_LIVE): just joins the same room.
- *  - Hold the big button to transmit; release to stop. Remote audio plays automatically.
- *
- * E2EE: audio frames are encrypted on the phone with a shared key derived from your passphrase
- * (LiveKey), so the LiveKit server only relays ciphertext. If the passphrases differ you will
- * connect but hear silence.
- *
- * Android only allows microphone capture while the app is visible, which is why both people
- * must have this panel open (the notification is the "tap to talk" step).
- */
 class LiveTalkActivity : ComponentActivity() {
     companion object { const val ACTION_OPEN_LIVE = "com.yrrider.getlob.OPEN_LIVE" }
 
@@ -63,12 +47,14 @@ class LiveTalkActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
-        if (powerManager != null && powerManager.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
-            proximityWakeLock = powerManager.newWakeLock(
-                PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
-                "getlob:LiveTalkProximity"
-            )
+        runCatching {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager != null && powerManager.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+                proximityWakeLock = powerManager.newWakeLock(
+                    PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                    "getlob:LiveTalkProximity"
+                )
+            }
         }
         val sendAlert = intent.action != ACTION_OPEN_LIVE
         setContent {
@@ -80,22 +66,28 @@ class LiveTalkActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (proximityWakeLock?.isHeld == false) {
-            runCatching { proximityWakeLock?.acquire(2 * 60 * 60 * 1000L) }
+        runCatching {
+            if (proximityWakeLock?.isHeld == false) {
+                proximityWakeLock?.acquire(2 * 60 * 60 * 1000L)
+            }
         }
     }
 
     override fun onPause() {
         super.onPause()
-        if (proximityWakeLock?.isHeld == true) {
-            runCatching { proximityWakeLock?.release() }
+        runCatching {
+            if (proximityWakeLock?.isHeld == true) {
+                proximityWakeLock?.release()
+            }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (proximityWakeLock?.isHeld == true) {
-            runCatching { proximityWakeLock?.release() }
+        runCatching {
+            if (proximityWakeLock?.isHeld == true) {
+                proximityWakeLock?.release()
+            }
         }
     }
 }
@@ -105,11 +97,28 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val liveKey = remember { LiveKey.get(ctx) }
-    val room = remember {
-        val e2ee = liveKey?.let { k -> E2EEOptions().also { it.keyProvider.setSharedKey(k) } }
-        LiveKit.create(ctx.applicationContext, options = RoomOptions(e2eeOptions = e2ee))
+
+    var initError by remember { mutableStateOf<String?>(null) }
+    var roomInstance by remember { mutableStateOf<Room?>(null) }
+
+    val roomIsActive = remember { AtomicBoolean(false) }
+
+    LaunchedEffect(Unit) {
+        try {
+            val e2ee = liveKey?.let { k ->
+                runCatching {
+                    E2EEOptions().also { it.keyProvider.setSharedKey(k) }
+                }.getOrNull()
+            }
+            roomInstance = LiveKit.create(ctx.applicationContext, options = RoomOptions(e2eeOptions = e2ee))
+            roomIsActive.set(true)
+        } catch (t: Throwable) {
+            Log.e("LiveTalkActivity", "Failed to initialize LiveKit", t)
+            initError = t.message ?: "Live Talk audio engine unavailable on this device"
+        }
     }
-    var status by remember { mutableStateOf("Connecting to room\u2026") }
+
+    var status by remember { mutableStateOf("Connecting to room…") }
     var connected by remember { mutableStateOf(false) }
     var partnerJoined by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(true) }
@@ -118,40 +127,59 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
     val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && !isMuted && connected && partnerJoined) {
             scope.launch {
-                runCatching { room.localParticipant.setMicrophoneEnabled(true) }
+                runCatching { roomInstance?.localParticipant?.setMicrophoneEnabled(true) }
             }
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(roomInstance) {
+        val room = roomInstance ?: return@LaunchedEffect
         if (!hasMic()) micPerm.launch(Manifest.permission.RECORD_AUDIO)
         try {
-            val res = FirebaseFunctions.getInstance().getHttpsCallable("getLiveToken").call().await().data as Map<*, *>
-            if (liveKey != null) room.e2eeManager?.enableE2EE(true)
-            room.connect(res["url"] as String, res["token"] as String)
+            val res = FirebaseFunctions.getInstance().getHttpsCallable("getLiveToken").call().await().data as? Map<*, *>
+            val url = (res?.get("url") as? String)?.trim() ?: ""
+            val token = (res?.get("token") as? String)?.trim() ?: ""
+
+            if (!roomIsActive.get() || room !== roomInstance) return@LaunchedEffect
+
+            if (url.isBlank() || token.isBlank()) {
+                status = "Live Talk service not configured.\nSet LIVEKIT_URL & secrets in Firebase Functions."
+                return@LaunchedEffect
+            }
+
+            if (liveKey != null) runCatching { room.e2eeManager?.enableE2EE(true) }
+            room.connect(url, token)
+            if (!roomIsActive.get() || room !== roomInstance) return@LaunchedEffect
             connected = true
-            status = "Waiting for partner to join\u2026"
-            if (sendAlert) Repo.send(ctx, Message(type = "live"))
+            status = "Waiting for partner to join…"
+            if (sendAlert) runCatching { Repo.send(ctx, Message(type = "live")) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+
+            throw e
         } catch (e: Exception) {
+            Log.e("LiveTalkActivity", "Connect failed", e)
             status = "Could not connect: ${e.message}"
         }
     }
 
-    LaunchedEffect(connected) {
-        if (connected) {
+    LaunchedEffect(connected, roomInstance) {
+        val room = roomInstance
+        if (connected && room != null) {
             partnerJoined = room.remoteParticipants.isNotEmpty()
             if (partnerJoined) status = "🟢 Partner Joined! (Live)"
-            room.events.events.collect {
-                val hasPartner = room.remoteParticipants.isNotEmpty()
-                if (hasPartner != partnerJoined) {
-                    partnerJoined = hasPartner
-                    if (hasPartner) {
-                        status = "🟢 Partner Joined! (Live)"
-                    } else {
-                        status = "Waiting for partner to join\u2026"
-                        isMuted = true
-                        scope.launch {
-                            runCatching { room.localParticipant.setMicrophoneEnabled(false) }
+            runCatching {
+                room.events.events.collect {
+                    val hasPartner = room.remoteParticipants.isNotEmpty()
+                    if (hasPartner != partnerJoined) {
+                        partnerJoined = hasPartner
+                        if (hasPartner) {
+                            status = "🟢 Partner Joined! (Live)"
+                        } else {
+                            status = "Waiting for partner to join…"
+                            isMuted = true
+                            scope.launch {
+                                runCatching { room.localParticipant.setMicrophoneEnabled(false) }
+                            }
                         }
                     }
                 }
@@ -159,14 +187,21 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(roomInstance) {
+        val room = roomInstance
         onDispose {
-            room.disconnect()
-            room.release()
+
+            if (room != null) {
+                roomIsActive.set(false)
+                connected = false
+                runCatching { room.disconnect() }
+                runCatching { room.release() }
+            }
         }
     }
 
     fun toggleMute() {
+        val room = roomInstance ?: return
         if (!connected || !partnerJoined) return
         if (!hasMic()) {
             isMuted = false
@@ -182,11 +217,18 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
 
     val none = remember { MutableInteractionSource() }
     Box(
-        Modifier.fillMaxSize().background(Color(0x99000000)).clickable(none, null) { close() },
+        Modifier
+            .fillMaxSize()
+            .background(Color(0x99000000))
+            .clickable(none, null) { close() },
         contentAlignment = Alignment.BottomCenter,
     ) {
         Surface(
-            Modifier.fillMaxWidth().padding(12.dp).navigationBarsPadding().clickable(none, null) { },
+            Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .navigationBarsPadding()
+                .clickable(none, null) { },
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF0D0D0D),
             tonalElevation = 6.dp,
@@ -204,37 +246,57 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
-                        text = if (liveKey != null) "🔒 Encrypted" else "🔓 Not encrypted",
+                        text = if (liveKey != null) "🔒 Encrypted" else "🔓 Voice Encryption Off",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (liveKey != null) Color(0xFF34D399) else Color(0xFFF87171)
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = status,
-                    fontSize = 14.sp,
-                    fontWeight = if (partnerJoined) FontWeight.Bold else FontWeight.Normal,
-                    color = when {
-                        !connected -> Color(0xFF94A3B8)
-                        partnerJoined -> Color(0xFF10B981)
-                        else -> Color(0xFFFBBF24)
+
+                if (initError != null) {
+                    Surface(
+                        color = Color(0x33EF4444),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Live audio unavailable:\n$initError",
+                            fontSize = 12.sp,
+                            color = Color(0xFFFCA5A5),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(8.dp)
+                        )
                     }
-                )
-                if (connected && !partnerJoined) {
-                    Text("Invitation & vibrations sent to partner 📡", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                } else if (connected && partnerJoined) {
-                    Text(if (isMuted) "Microphone muted (Tap to speak)" else "Broadcasting your voice live (Tap to mute)", fontSize = 11.sp, color = Color(0xFFCBD5E1))
+                } else {
+                    Text(
+                        text = status,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        fontWeight = if (partnerJoined) FontWeight.Bold else FontWeight.Normal,
+                        color = when {
+                            !connected -> Color(0xFF94A3B8)
+                            partnerJoined -> Color(0xFF10B981)
+                            else -> Color(0xFFFBBF24)
+                        }
+                    )
+                    if (connected && !partnerJoined) {
+                        Spacer(Modifier.height(2.dp))
+                        Text("Invitation sent to partner 📡", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                    } else if (connected && partnerJoined) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            if (isMuted) "Microphone muted (Tap button to speak)" else "Broadcasting your voice live (Tap button to mute)",
+                            fontSize = 11.sp,
+                            color = Color(0xFFCBD5E1)
+                        )
+                    }
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    if (liveKey != null) "🔒 End-to-End Encrypted" else "🔓 Voice Encryption Not Set",
-                    fontSize = 11.sp,
-                    color = if (liveKey != null) Color(0xFF4ADE80) else Color(0xFFFBBF24)
-                )
+
                 Spacer(Modifier.height(18.dp))
 
                 val buttonBg = when {
+                    initError != null -> Color(0xFF27272A)
                     !connected -> Color(0xFF27272A)
                     !partnerJoined -> Color(0xFFB45309)
                     isMuted -> Color(0xFFDC2626)
@@ -243,20 +305,21 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
 
                 Box(
                     Modifier
-                        .size(128.dp)
+                        .size(110.dp)
                         .clip(CircleShape)
                         .background(buttonBg)
-                        .clickable(enabled = connected && partnerJoined) { toggleMute() },
+                        .clickable(enabled = connected && partnerJoined && initError == null) { toggleMute() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = when {
+                            initError != null -> "⚠️"
                             !connected -> "⏳"
                             !partnerJoined -> "📡"
                             isMuted -> "🔇"
                             else -> "🎤"
                         },
-                        fontSize = 44.sp
+                        fontSize = 38.sp
                     )
                 }
                 Spacer(Modifier.height(16.dp))

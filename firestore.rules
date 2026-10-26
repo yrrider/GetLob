@@ -7,19 +7,17 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.members;
     }
 
-    // Each user can only touch their own profile (pairId + FCM token).
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // Pairs and invites are created/joined only through Cloud Functions (admin SDK).
     match /invites/{code} {
       allow read, write: if false;
     }
 
     match /pairs/{pairId} {
       allow read: if request.auth != null && (resource == null || request.auth.uid in resource.data.members);
-      // Pair members may only save display settings, canvasClearedAt, and FCM tokens
+
       allow update: if request.auth != null && request.auth.uid in resource.data.members &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['settings', 'canvasClearedAt', 'tokens']);
       allow create, delete: if false;

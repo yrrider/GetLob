@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.appwidget.updateAll
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import com.yrrider.getlob.data.LocalStore
 import com.yrrider.getlob.data.Repo
 import com.yrrider.getlob.data.WidgetSettings
@@ -76,7 +77,7 @@ class WidgetConfigActivity : ComponentActivity() {
             AppWidgetManager.INVALID_APPWIDGET_ID
         ) ?: AppWidgetManager.INVALID_APPWIDGET_ID
 
-        // Default to CANCELED until the user taps Done
+
         setResult(Activity.RESULT_CANCELED)
 
         setContent {
@@ -90,16 +91,23 @@ class WidgetConfigActivity : ComponentActivity() {
             ) {
                 Surface(Modifier.fillMaxSize(), color = Color(0xFF000000)) {
                     ConfigScreen { finalSettings ->
-                        // 1. Save locally
+
                         LocalStore.writeSettings(this, finalSettings)
 
-                        // 2. Set result OK immediately so launcher adds the widget without failure
+
                         val resultValue = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
                         setResult(Activity.RESULT_OK, resultValue)
                         finish()
 
-                        // 3. Update Glance widget & sync to Firestore in background
+
                         CoroutineScope(Dispatchers.IO).launch {
+
+                            runCatching {
+                                if (widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                                    val id = GlanceAppWidgetManager(applicationContext).getGlanceIdBy(widgetId)
+                                    PairWidget().update(applicationContext, id)
+                                }
+                            }
                             runCatching { PairWidget().updateAll(applicationContext) }
                             runCatching { Repo.saveSettings(applicationContext, finalSettings) }
                         }
@@ -133,7 +141,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             color = Color.White
         )
 
-        // Live Frosted Glass Preview
+
         val effectiveBg = if (s.bgColor != 0L) s.bgColor else theme.bg
         val previewBg = if (s.glassEffect) {
             Brush.verticalGradient(
@@ -180,7 +188,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             }
         }
 
-        // Widget Background Colour Picker
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -211,7 +219,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             }
         }
 
-        // Glass UI Effect Switch
+
         Row(
             Modifier
                 .fillMaxWidth()
@@ -231,7 +239,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             )
         }
 
-        // Background Transparency Slider (Smooth dragging without IPC lag)
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -252,7 +260,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             )
         }
 
-        // Border Colour
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -283,7 +291,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             }
         }
 
-        // Font Style (Calligraphy, Cursive, Serif, Modern)
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -299,7 +307,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             )
         }
 
-        // Font Style (Calligraphy, Cursive, Serif, Modern)
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -320,7 +328,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             }
         }
 
-        // Font Colour
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -351,7 +359,7 @@ private fun ConfigScreen(onDone: (WidgetSettings) -> Unit) {
             }
         }
 
-        // Corner Roundness
+
         Column(
             Modifier
                 .fillMaxWidth()

@@ -3,7 +3,6 @@ package com.yrrider.getlob.widget
 import android.content.Context
 import com.yrrider.getlob.data.LocalStore
 
-/** A widget colour theme. Colours are ARGB longs. */
 data class WidgetTheme(val name: String, val bg: Long, val fg: Long, val accent: Long)
 
 object WidgetThemes {
@@ -38,7 +37,6 @@ object WidgetThemes {
         LocalStore.writeSettings(c, s.copy(cornerDp = dp))
     }
 
-    /** Used as a cache-buster so Glance re-decodes when style changes. */
     fun version(c: Context): Int {
         val s = LocalStore.readSettings(c)
         return s.themeIndex * 10000 + s.cornerDp * 100 + (s.bgTransparency * 100).toInt() + s.fontStyle.hashCode().and(0x7F)

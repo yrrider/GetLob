@@ -1,49 +1,53 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
-const crypto = require("crypto");
+const { codeFromUuid, purgePairData } = require("./purge");
 
 admin.initializeApp();
 const db = admin.firestore();
 
-/** Generates a 6-character cryptographically secure random alphanumeric code. */
-function randomCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s = "";
-  for (let i = 0; i < 6; i++) s += chars[crypto.randomInt(0, chars.length)];
-  return s;
-}
-
-/**
- * Creates a pending pair invite with 24-hour expiration.
- * Returns { code, pairId }.
- */
 exports.createPair = onCall(async (req) => {
   const uid = req.auth && req.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
 
-  // Retry on the very unlikely invite-code collision instead of overwriting another invite.
+  const deviceUuid = String((req.data && req.data.deviceUuid) || "").trim();
+
+  const userDoc = await db.collection("users").doc(uid).get();
+  const oldPairId = userDoc.exists ? userDoc.get("pairId") : "";
+  if (oldPairId) {
+    await purgePairData(admin, db, oldPairId);
+  }
+
   for (let attempt = 0; attempt < 5; attempt++) {
-    const code = randomCode();
+    const code = codeFromUuid(deviceUuid);
     const pairRef = db.collection("pairs").doc();
     const inviteRef = db.collection("invites").doc(code);
     const userRef = db.collection("users").doc(uid);
-    const expiresAt = Date.now() + 24 * 3600 * 1000; // 24 hour expiry
+    const expiresAt = Date.now() + 24 * 3600 * 1000;
 
     const result = await db.runTransaction(async (tx) => {
       const [invite, user] = await Promise.all([tx.get(inviteRef), tx.get(userRef)]);
       if (invite.exists) return null;
-      const oldPairId = user.exists ? user.get("pairId") : "";
-      const oldPair = oldPairId ? await tx.get(db.collection("pairs").doc(oldPairId)) : null;
-      if (oldPair && oldPair.exists) {
-        tx.update(oldPair.ref, { members: admin.firestore.FieldValue.arrayRemove(uid) });
-        const oldCode = oldPair.get("code");
-        if (oldCode) tx.delete(db.collection("invites").doc(oldCode));
-      }
+
       const fcmToken = user.exists ? user.get("fcmToken") : null;
-      tx.set(pairRef, { members: [uid], createdAt: Date.now(), code, tokens: fcmToken ? { [uid]: fcmToken } : {} });
-      tx.set(inviteRef, { pairId: pairRef.id, createdAt: Date.now(), expiresAt });
-      tx.set(userRef, { pairId: pairRef.id }, { merge: true });
+      tx.set(pairRef, {
+        members: [uid],
+        creatorUid: uid,
+        creatorUuid: deviceUuid,
+        createdAt: Date.now(),
+        code,
+        isPairingMode: true,
+        tokens: fcmToken ? { [uid]: fcmToken } : {}
+      });
+      tx.set(inviteRef, {
+        pairId: pairRef.id,
+        creatorUid: uid,
+        creatorUuid: deviceUuid,
+        isPairingMode: true,
+        createdAt: Date.now(),
+        expiresAt
+      });
+      tx.set(userRef, { pairId: pairRef.id, deviceUuid }, { merge: true });
       return { code, pairId: pairRef.id };
     });
     if (result) return result;
@@ -51,23 +55,23 @@ exports.createPair = onCall(async (req) => {
   throw new HttpsError("aborted", "Could not reserve an invite code; please retry");
 });
 
-/**
- * Joins an existing pair via a 6-character code.
- * Adds the caller to the pair's members with expiry and rate-limit checks.
- */
 exports.joinPair = onCall(async (req) => {
   const uid = req.auth && req.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
 
   const code = String((req.data && req.data.code) || "").trim().toUpperCase();
+  const deviceUuid = String((req.data && req.data.deviceUuid) || "").trim();
   if (!code || code.length < 6) throw new HttpsError("invalid-argument", "Invalid invite code");
+
+  const userDoc = await db.collection("users").doc(uid).get();
+  const oldPairId = userDoc.exists ? userDoc.get("pairId") : "";
 
   const inviteRef = db.collection("invites").doc(code);
   const userRef = db.collection("users").doc(uid);
-  return db.runTransaction(async (tx) => {
+
+  const joinResult = await db.runTransaction(async (tx) => {
     const [invite, user] = await Promise.all([tx.get(inviteRef), tx.get(userRef)]);
 
-    // Basic rate limit check
     const failedAttempts = (user.exists && user.get("failedJoinAttempts")) || 0;
     const lastAttempt = (user.exists && user.get("lastJoinAttempt")) || 0;
     if (failedAttempts >= 5 && Date.now() - lastAttempt < 60 * 1000) {
@@ -77,6 +81,11 @@ exports.joinPair = onCall(async (req) => {
     if (!invite.exists) {
       tx.set(userRef, { failedJoinAttempts: failedAttempts + 1, lastJoinAttempt: Date.now() }, { merge: true });
       throw new HttpsError("not-found", "Invalid or expired code");
+    }
+
+    const isPairingMode = invite.get("isPairingMode");
+    if (isPairingMode !== true) {
+      throw new HttpsError("failed-precondition", "Partner device is not currently in pairing mode. Partner must keep the pairing screen open.");
     }
 
     const expiresAt = invite.get("expiresAt");
@@ -89,47 +98,67 @@ exports.joinPair = onCall(async (req) => {
     const pairRef = db.collection("pairs").doc(pairId);
     const pair = await tx.get(pairRef);
     if (!pair.exists) throw new HttpsError("not-found", "Pair not found");
+
+    if (pair.get("isPairingMode") !== true) {
+      throw new HttpsError("failed-precondition", "Partner device is not in pairing mode.");
+    }
+
     const members = pair.get("members") || [];
     if (members.length >= 2 && !members.includes(uid)) {
       throw new HttpsError("failed-precondition", "This pair is already full");
     }
-    const oldPairId = user.exists ? user.get("pairId") : "";
-    const oldPair = oldPairId && oldPairId !== pairId ? await tx.get(db.collection("pairs").doc(oldPairId)) : null;
-    if (oldPair && oldPair.exists) {
-      tx.update(oldPair.ref, { members: admin.firestore.FieldValue.arrayRemove(uid) });
-      const oldCode = oldPair.get("code");
-      if (oldCode) tx.delete(db.collection("invites").doc(oldCode));
-    }
+
     const fcmToken = user.exists ? user.get("fcmToken") : null;
-    const updatePair = { members: admin.firestore.FieldValue.arrayUnion(uid) };
+    const updatePair = {
+      members: admin.firestore.FieldValue.arrayUnion(uid),
+      partnerUuid: deviceUuid,
+      isPairingMode: false
+    };
     if (fcmToken) updatePair[`tokens.${uid}`] = fcmToken;
     tx.update(pairRef, updatePair);
-    tx.set(userRef, { pairId, failedJoinAttempts: 0 }, { merge: true });
+    tx.set(userRef, { pairId, deviceUuid, failedJoinAttempts: 0 }, { merge: true });
     tx.delete(inviteRef);
-    return { pairId };
+
+    return { pairId, oldPairIdToPurge: (oldPairId && oldPairId !== pairId) ? oldPairId : null };
   });
+
+  if (joinResult.oldPairIdToPurge) {
+    await purgePairData(admin, db, joinResult.oldPairIdToPurge);
+  }
+
+  return { pairId: joinResult.pairId };
 });
 
-/** Removes the caller from their pair so their old membership cannot retain access. */
-exports.leavePair = onCall(async (req) => {
+exports.exitPairingMode = onCall(async (req) => {
   const uid = req.auth && req.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
-  const userRef = db.collection("users").doc(uid);
-  await db.runTransaction(async (tx) => {
-    const user = await tx.get(userRef);
-    const pairId = user.exists ? user.get("pairId") : "";
-    const pair = pairId ? await tx.get(db.collection("pairs").doc(pairId)) : null;
-    if (pair && pair.exists) {
-      tx.update(pair.ref, { members: admin.firestore.FieldValue.arrayRemove(uid), [`tokens.${uid}`]: admin.firestore.FieldValue.delete() });
-      const code = pair.get("code");
-      if (code) tx.delete(db.collection("invites").doc(code));
+
+  const userDoc = await db.collection("users").doc(uid).get();
+  const pairId = userDoc.exists ? userDoc.get("pairId") : "";
+  if (pairId) {
+    const pair = await db.collection("pairs").doc(pairId).get();
+    if (pair.exists && (pair.get("members") || []).length <= 1) {
+      await purgePairData(admin, db, pairId);
     }
-    tx.set(userRef, { pairId: "" }, { merge: true });
-  });
+  }
+  await db.collection("users").doc(uid).set({ pairId: "" }, { merge: true });
   return { ok: true };
 });
 
-/** Deletes the paired canvas and uploads for both members. */
+exports.leavePair = onCall(async (req) => {
+  const uid = req.auth && req.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
+
+  const userDoc = await db.collection("users").doc(uid).get();
+  const pairId = (userDoc.exists && userDoc.get("pairId")) || (req.data && req.data.pairId) || "";
+
+  if (pairId) {
+    await purgePairData(admin, db, pairId);
+  }
+  await db.collection("users").doc(uid).set({ pairId: "" }, { merge: true });
+  return { ok: true };
+});
+
 exports.clearPairHistory = onCall(async (req) => {
   const uid = req.auth && req.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
@@ -151,7 +180,6 @@ exports.clearPairHistory = onCall(async (req) => {
   return { ok: true };
 });
 
-/** On every new message, push a high-priority data message to the OTHER member's device. */
 exports.onMessageCreated = onDocumentCreated("pairs/{pairId}/messages/{msgId}", async (event) => {
   const snap = event.data;
   if (!snap) return;
@@ -161,7 +189,6 @@ exports.onMessageCreated = onDocumentCreated("pairs/{pairId}/messages/{msgId}", 
   const target = (pairData.members || []).find((u) => u !== m.from);
   if (!target) return;
 
-  // Single-read fast path: read cached FCM token directly from the pair document
   let token = pairData.tokens && pairData.tokens[target];
   if (!token) {
     const user = await db.collection("users").doc(target).get();
@@ -172,7 +199,6 @@ exports.onMessageCreated = onDocumentCreated("pairs/{pairId}/messages/{msgId}", 
   }
   if (!token) return;
 
-  // Notice: 'from' is a reserved FCM key in data payload, renamed to senderUid
   const createdAt = m.createdAt && typeof m.createdAt.toMillis === "function"
     ? m.createdAt.toMillis()
     : Date.now();
@@ -183,8 +209,11 @@ exports.onMessageCreated = onDocumentCreated("pairs/{pairId}/messages/{msgId}", 
     mediaUrl: String(m.mediaUrl || ""),
     senderUid: String(m.from || ""),
     createdAt: String(createdAt),
+    replyToId: String(m.replyToId || ""),
+    replyText: String(m.replyText || ""),
+    replySender: String(m.replySender || ""),
   };
-  // Data-only + high priority: wakes the app so it can update the widget and vibrate.
+
   const urgent = ["sos", "ptt", "vibe", "live"].includes(data.type);
   try {
     await admin.messaging().send({

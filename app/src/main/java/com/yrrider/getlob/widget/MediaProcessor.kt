@@ -9,7 +9,9 @@ import android.graphics.Canvas
 import android.graphics.Movie
 import android.media.MediaMetadataRetriever
 import android.util.Log
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.glance.appwidget.GlanceAppWidgetManager
+import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.glance.appwidget.updateAll
 import com.yrrider.getlob.data.LocalStore
 import com.yrrider.getlob.data.Message
@@ -21,18 +23,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
-/**
- * Turns an incoming Message into something the widget can show:
- *  - image  -> poster still
- *  - gif    -> poster + up to 10 frames (played as a ViewFlipper slideshow)
- *  - video  -> poster + up to 10 frames from the first ~3 s
- *  - others -> text only
- * Media is downloaded and decrypted (if end-to-end encrypted) before processing.
- * Message text must already be decrypted by the caller. Then every widget instance refreshes.
- */
 object MediaProcessor {
     private const val MAX_FRAMES = 3
-    private const val FRAME_PX = 240          // frames are small on purpose (widget memory limit)
+    private const val FRAME_PX = 240
     private const val POSTER_PX = 480
 
     suspend fun apply(ctx: Context, m: Message, localFile: File? = null) = withContext(Dispatchers.IO) {
@@ -58,7 +51,9 @@ object MediaProcessor {
                     )
                 } else {
                     Log.e("MediaProcessor", "Failed to get image file for mediaUrl: ${m.mediaUrl}")
-                    null
+                    if (m.text.isNotBlank()) {
+                        WidgetState(kind = MsgType.TEXT, text = m.text)
+                    } else null
                 }
             }
 
@@ -98,22 +93,33 @@ object MediaProcessor {
                 clear(ctx)
                 WidgetState(kind = MsgType.SOS, text = "🚨 SOS ALERT")
             }
+
+            MsgType.VIBE -> {
+                clear(ctx)
+                WidgetState(kind = MsgType.EMOJI, text = "💓")
+            }
             MsgType.GAME -> old.copy(kind = MsgType.GAME, text = m.text.ifEmpty { "🎮 Your turn!" })
-            else -> null    // vibe etc. do not change the widget
+            else -> null
         }
         if (next != null) {
-            LocalStore.write(ctx, next.copy(updatedAt = System.currentTimeMillis()))
+            LocalStore.write(ctx, next.copy(fitCrop = old.fitCrop, updatedAt = System.currentTimeMillis()))
             refresh(ctx)
         }
     }
 
-    suspend fun refresh(ctx: Context) {
+    suspend fun refresh(ctx: Context) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
         runCatching {
             val manager = GlanceAppWidgetManager(ctx)
             val glanceIds = manager.getGlanceIds(PairWidget::class.java)
             glanceIds.forEach { id ->
+                updateAppWidgetState(ctx, id) { prefs ->
+                    prefs[longPreferencesKey("update_tick")] = now
+                }
                 PairWidget().update(ctx, id)
             }
+        }.onFailure { e ->
+            Log.e("MediaProcessor", "Error updating Glance widgets: ${e.message}", e)
         }
         runCatching { PairWidget().updateAll(ctx) }
         runCatching {
@@ -129,7 +135,6 @@ object MediaProcessor {
         }
     }
 
-    /** Clears the locally rendered canvas after the paired history is removed. */
     suspend fun clearCanvas(ctx: Context) = withContext(Dispatchers.IO) {
         clear(ctx)
         LocalStore.write(ctx, WidgetState(updatedAt = System.currentTimeMillis()))
@@ -142,7 +147,7 @@ object MediaProcessor {
     }
 
     private fun writePoster(ctx: Context, srcPath: String) {
-        // Large enough for any widget; per-size scaling happens at render time.
+
         val bmp = ImageFit.decode(srcPath, POSTER_PX, POSTER_PX, crop = false) ?: return
         save(bmp, LocalStore.posterFile(ctx), 85)
     }
@@ -180,7 +185,7 @@ object MediaProcessor {
             if (poster != null) save(poster, LocalStore.posterFile(ctx), 85)
             var count = 0
             for (i in 0 until MAX_FRAMES) {
-                val t = i * 300_000L   // every 0.3 s => ~3 s preview
+                val t = i * 300_000L
                 val f = r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, FRAME_PX, FRAME_PX) ?: break
                 save(f, LocalStore.frameFile(ctx, count), 80)
                 count++

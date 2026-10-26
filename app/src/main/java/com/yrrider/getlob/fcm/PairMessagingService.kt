@@ -14,11 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 
-/**
- * Receives high-priority data messages sent by the Cloud Function whenever the partner writes
- * a message. Decrypts text, downloads (and decrypts) media, updates the widget, vibrates,
- * plays SOS alarm, and shows notifications.
- */
+
+
 class PairMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
@@ -28,7 +25,7 @@ class PairMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val m = Message.fromFcm(message.data)
         Notifier.createChannels(this)
-        // FCM gives ~20-30 s of execution time; keep work bounded.
+
         runBlocking {
             withTimeoutOrNull(25_000) { handle(applicationContext, m) }
         }
@@ -47,10 +44,10 @@ class PairMessagingService : FirebaseMessagingService() {
                 AudioAlerts.vibrateLiveInvite(ctx)
             }
 
-            // 1. Show notification and vibrate immediately - do not block on media downloads
+
             Notifier.show(ctx, m)
 
-            // 2. Process media and update widget in background
+
             runCatching {
                 MediaProcessor.apply(ctx, m)
             }.onFailure { e ->

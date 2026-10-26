@@ -13,18 +13,6 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
-/**
- * End-to-end encryption for GetLob:
- *  - Default key: Automatically derived from the shared pairId (SHA-256("GetLob:e2ee:v1:$pairId")).
- *    Active immediately upon pairing so all text, files, and audio are encrypted out of the box!
- *  - Custom passphrase: Users can optionally provide a secret passphrase (PBKDF2-HMAC-SHA256, 120k iterations, salted with pairId).
- *  - Text: AES-256-GCM, stored as "e1:" + base64(iv + ciphertext).
- *  - Files (images, GIF, video): AES-256-GCM streamed; file layout = iv(12) + ciphertext.
- *    Encrypted uploads get a ".enc" suffix.
- *
- * The server (Firestore / Storage / Cloud Functions) only ever sees ciphertext.
- * Both phones show the same short fingerprint code when connected with the same key.
- */
 object Crypto {
     private const val PREFIX = "e1:"
     private const val IV_LEN = 12
@@ -53,7 +41,6 @@ object Crypto {
 
     private fun key(c: Context): SecretKeySpec? = rawKeyBytes(c)?.let { SecretKeySpec(it, "AES") }
 
-    /** Short code to compare on both phones, e.g. "A1-B2-C3". Same key => same code. */
     fun fingerprint(c: Context): String {
         val k = rawKeyBytes(c) ?: return ""
         val h = MessageDigest.getInstance("SHA-256").digest("fp".toByteArray() + k)
@@ -63,7 +50,6 @@ object Crypto {
     private fun cipher(mode: Int, k: SecretKeySpec, iv: ByteArray) =
         Cipher.getInstance("AES/GCM/NoPadding").apply { init(mode, k, GCMParameterSpec(128, iv)) }
 
-    // ---------- text ----------
     fun encryptText(c: Context, s: String): String {
         val k = key(c) ?: return s
         if (s.isEmpty()) return s
@@ -83,10 +69,8 @@ object Crypto {
         }
     }
 
-    // ---------- files ----------
     fun isEncryptedUrl(url: String) = url.substringBefore('?').endsWith(".enc")
 
-    /** Returns an encrypted copy of [src] (or [src] itself if no key is set). */
     fun encryptFile(c: Context, src: File): File {
         val k = key(c) ?: return src
         val out = File(c.cacheDir, "enc_${System.nanoTime()}")
@@ -100,7 +84,6 @@ object Crypto {
         return out
     }
 
-    /** Decrypts [src] into [dst] if the URL says it is encrypted; otherwise just copies. */
     fun decryptOrCopy(c: Context, url: String, src: File, dst: File) {
         if (!isEncryptedUrl(url)) { src.copyTo(dst, overwrite = true); return }
         val k = key(c) ?: throw IllegalStateException("Encrypted media: pair connection or passphrase required")

@@ -1,19 +1,13 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
-const { defineSecret, defineString } = require("firebase-functions/params");
+const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { AccessToken } = require("livekit-server-sdk");
 
-// Set with: firebase functions:secrets:set LIVEKIT_API_KEY  (and LIVEKIT_API_SECRET)
-//           and LIVEKIT_URL (wss://your-project.livekit.cloud) via .env
-const LIVEKIT_API_KEY = defineSecret("LIVEKIT_API_KEY");
-const LIVEKIT_API_SECRET = defineSecret("LIVEKIT_API_SECRET");
-const LIVEKIT_URL = defineString("LIVEKIT_URL");
+const LIVEKIT_URL = defineString("LIVEKIT_URL", { default: "wss://getlob-hlyajc4h.livekit.cloud" });
 
 const db = () => admin.firestore();
 
-/** Returns a short-lived LiveKit token for the caller's pair room (room name = pairId). */
-exports.getLiveToken = onCall({ secrets: [LIVEKIT_API_KEY, LIVEKIT_API_SECRET] }, async (req) => {
+exports.getLiveToken = onCall(async (req) => {
   const uid = req.auth && req.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
 
@@ -25,14 +19,16 @@ exports.getLiveToken = onCall({ secrets: [LIVEKIT_API_KEY, LIVEKIT_API_SECRET] }
     throw new HttpsError("permission-denied", "Not a member of this pair");
   }
 
-  // Sanitize key and secret by trimming any trailing whitespace or newlines
-  const apiKey = (LIVEKIT_API_KEY.value() || "").trim();
-  const apiSecret = (LIVEKIT_API_SECRET.value() || "").trim();
+  const apiKey = (process.env.LIVEKIT_API_KEY || "").trim();
+  const apiSecret = (process.env.LIVEKIT_API_SECRET || "").trim();
+  if (!apiKey || !apiSecret) {
+    throw new HttpsError("failed-precondition", "LiveKit credentials not configured on server");
+  }
 
   const at = new AccessToken(apiKey, apiSecret, {
     identity: uid,
     ttl: "10m",
   });
   at.addGrant({ roomJoin: true, room: pairId, canPublish: true, canSubscribe: true });
-  return { token: await at.toJwt(), url: (LIVEKIT_URL.value() || "").trim() };
+  return { token: await at.toJwt(), url: (LIVEKIT_URL.value() || process.env.LIVEKIT_URL || "").trim() };
 });

@@ -35,7 +35,7 @@ object Notifier {
                 setBypassDnd(true)
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 600, 200, 600, 200, 600, 200, 800)
-                setSound(null, null) // Silent channel so dedicated synthesized siren plays cleanly without clashing
+                setSound(null, null)
             }
         )
     }
@@ -69,7 +69,7 @@ object Notifier {
     }
 
     fun show(ctx: Context, m: Message) {
-        if (m.type == MsgType.VIBE) return // Vibe uses haptic pulse only
+        if (m.type == MsgType.VIBE) return
 
         val partnerName = LocalStore.readSettings(ctx).partnerName.ifBlank { "Partner" }
 
@@ -118,7 +118,7 @@ object Notifier {
         try {
             NotificationManagerCompat.from(ctx).notify(m.type.hashCode(), b.build())
         } catch (_: SecurityException) {
-            // POST_NOTIFICATIONS permission not granted yet
+
         }
     }
 }

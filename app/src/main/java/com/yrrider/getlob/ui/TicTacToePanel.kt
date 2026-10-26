@@ -20,11 +20,8 @@ import com.yrrider.getlob.data.Repo
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 
-/**
- * Tic-tac-toe synced through one Firestore doc (pairs/{id}/games/current).
- * Both devices listen to it, so a move shows up on the other phone instantly.
- * [onMoved] is called after a valid move so the caller can ping the partner ("Your turn!").
- */
+
+
 @Composable
 fun TicTacToePanel(onBack: () -> Unit, onMoved: (String) -> Unit) {
     val ctx = LocalContext.current

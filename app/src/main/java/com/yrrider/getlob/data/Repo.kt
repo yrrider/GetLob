@@ -17,20 +17,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
-/**
- * Single entry point to Firebase: auth, pairing, messages, media upload, game.
- * Text and media are end-to-end encrypted (see Crypto) when a passphrase is set.
- * Schema:
- *   users/{uid}                          { pairId, fcmToken }
- *   pairs/{pairId}                       { members: [uid, uid], code }
- *   pairs/{pairId}/messages/{id}         Message (text may be ciphertext "e1:...")
- *   pairs/{pairId}/games/current         GameState
- */
 data class PairInfo(
     val pairId: String = "",
     val code: String = "",
     val members: List<String> = emptyList(),
     val canvasClearedAt: Long = 0L,
+    val createdAt: Long = 0L,
 )
 
 object Repo {
@@ -39,9 +31,8 @@ object Repo {
     private val fns get() = FirebaseFunctions.getInstance()
     private val storage get() = FirebaseStorage.getInstance()
 
-    // ---------- auth ----------
-    suspend fun uid(): String =
-        auth.currentUser?.uid ?: auth.signInAnonymously().await().user!!.uid
+    suspend fun uid(): String = auth.currentUser?.uid
+        ?: requireNotNull(auth.signInAnonymously().await().user?.uid) { "Anonymous sign-in did not return a user" }
 
     suspend fun saveToken(token: String, ctx: Context? = null) {
         val u = uid()
@@ -58,11 +49,11 @@ object Repo {
         }
     }
 
-    // ---------- pairing ----------
-    /** Creates a new pair and returns the 6-character invite code. */
     suspend fun createPair(ctx: Context): String {
         uid()
-        val res = fns.getHttpsCallable("createPair").call().await().data as Map<*, *>
+        val deviceUuid = LocalStore.appUuid(ctx)
+        val res = fns.getHttpsCallable("createPair")
+            .call(mapOf("deviceUuid" to deviceUuid)).await().data as Map<*, *>
         val pid = res["pairId"] as String
         val c = res["code"] as String
         with(LocalStore) {
@@ -74,8 +65,9 @@ object Repo {
 
     suspend fun joinPair(ctx: Context, code: String) {
         uid()
+        val deviceUuid = LocalStore.appUuid(ctx)
         val res = fns.getHttpsCallable("joinPair")
-            .call(mapOf("code" to code.trim().uppercase())).await().data as Map<*, *>
+            .call(mapOf("code" to code.trim().uppercase(), "deviceUuid" to deviceUuid)).await().data as Map<*, *>
         val pid = res["pairId"] as String
         with(LocalStore) {
             ctx.pairId = pid
@@ -83,40 +75,77 @@ object Repo {
         }
     }
 
-    suspend fun pairId(ctx: Context): String {
-        val cached = with(LocalStore) { ctx.pairId }
-        if (cached.isNotEmpty()) return cached
-        val id = db.collection("users").document(uid()).get().await().getString("pairId") ?: ""
-        with(LocalStore) { ctx.pairId = id }
-        return id
-    }
-
-    suspend fun unpair(ctx: Context) {
-        runCatching { fns.getHttpsCallable("leavePair").call().await() }
-        Crypto.clear(ctx)
+    suspend fun exitPairingMode(ctx: Context) {
+        runCatching { fns.getHttpsCallable("exitPairingMode").call().await() }
         with(LocalStore) {
             ctx.pairId = ""
             ctx.pairCode = ""
         }
     }
 
-    /** Removes every message and shared upload for the current pair. */
+    suspend fun pairId(ctx: Context): String {
+        val cached = with(LocalStore) { ctx.pairId }
+        if (cached.isNotEmpty()) return cached
+        return runCatching {
+            val id = db.collection("users").document(uid()).get().await().getString("pairId") ?: ""
+            with(LocalStore) { ctx.pairId = id }
+            id
+        }.getOrDefault("")
+    }
+
+    suspend fun unpair(ctx: Context) {
+        val pid = pairId(ctx)
+        if (pid.isNotEmpty()) {
+
+            runCatching {
+                fns.getHttpsCallable("leavePair").call(mapOf("pairId" to pid)).await()
+            }
+
+            runCatching {
+                val storageRef = storage.reference.child("pairs/$pid/media")
+                storageRef.listAll().await().items.forEach { item ->
+                    runCatching { item.delete().await() }
+                }
+            }
+            runCatching {
+                val messages = db.collection("pairs").document(pid).collection("messages").limit(500).get().await()
+                if (!messages.isEmpty) {
+                    val batch = db.batch()
+                    messages.documents.forEach { batch.delete(it.reference) }
+                    batch.commit().await()
+                }
+                db.collection("pairs").document(pid).delete().await()
+            }
+        }
+
+        Crypto.clear(ctx)
+
+        LocalStore.clearAllData(ctx)
+        with(LocalStore) {
+            ctx.pairId = ""
+            ctx.pairCode = ""
+        }
+    }
+
     suspend fun clearHistory(ctx: Context) {
         val pid = pairId(ctx)
         require(pid.isNotEmpty()) { "Not paired yet" }
 
-        // 1. Try cloud function first
         val cloudSuccess = runCatching {
             fns.getHttpsCallable("clearPairHistory").call().await()
         }.isSuccess
 
-        // 2. Client-side fallback if Cloud Function was not deployed or returned error
         if (!cloudSuccess) {
             val messages = db.collection("pairs").document(pid).collection("messages").limit(500).get().await()
             if (!messages.isEmpty) {
                 val batch = db.batch()
                 messages.documents.forEach { batch.delete(it.reference) }
                 batch.commit().await()
+            }
+            runCatching {
+                storage.reference.child("pairs/$pid/media").listAll().await().items.forEach { item ->
+                    item.delete().await()
+                }
             }
             db.collection("pairs").document(pid)
                 .set(mapOf("canvasClearedAt" to System.currentTimeMillis()), com.google.firebase.firestore.SetOptions.merge())
@@ -134,12 +163,14 @@ object Repo {
             if (snap != null && snap.exists()) {
                 val members = snap.get("members") as? List<*> ?: emptyList<Any>()
                 val code = snap.getString("code") ?: ""
+                val createdAt = snap.getLong("createdAt") ?: snap.getTimestamp("createdAt")?.toDate()?.time ?: 0L
                 trySend(
                     PairInfo(
                         pairId = snap.id,
                         code = code,
                         members = members.filterIsInstance<String>(),
-                        canvasClearedAt = snap.getLong("canvasClearedAt") ?: 0L
+                        canvasClearedAt = snap.getLong("canvasClearedAt") ?: 0L,
+                        createdAt = createdAt
                     )
                 )
             } else {
@@ -156,7 +187,6 @@ object Repo {
         return members.filterIsInstance<String>().firstOrNull { it != me } ?: ""
     }
 
-    // ---------- settings sync ----------
     fun settingsFlow(pairId: String): Flow<WidgetSettings?> = callbackFlow {
         if (pairId.isEmpty()) {
             trySend(null)
@@ -189,22 +219,24 @@ object Repo {
         }
     }
 
-    // ---------- messages ----------
     suspend fun send(ctx: Context, m: Message) {
         val pid = pairId(ctx)
         require(pid.isNotEmpty()) { "Not paired yet" }
-        val sealed = m.copy(text = Crypto.encryptText(ctx, m.text))
+        val sealed = m.copy(
+            text = Crypto.encryptText(ctx, m.text),
+            replyText = if (m.replyText.isNotEmpty()) Crypto.encryptText(ctx, m.replyText) else ""
+        )
         val payload = sealed.copy(from = uid()).toMap().toMutableMap()
-        // Server time prevents a client from keeping messages outside the retention policy.
+
         payload["createdAt"] = FieldValue.serverTimestamp()
         db.collection("pairs").document(pid).collection("messages").add(payload).await()
     }
 
-    /** Copies a picked Uri to cache, encrypts if needed, uploads, returns a download URL. */
     suspend fun upload(ctx: Context, uri: Uri, ext: String): String {
         val tmp = withContext(Dispatchers.IO) {
             File(ctx.cacheDir, "up_${System.nanoTime()}").also { f ->
-                ctx.contentResolver.openInputStream(uri)!!.use { i -> f.outputStream().use { i.copyTo(it) } }
+                requireNotNull(ctx.contentResolver.openInputStream(uri)) { "Unable to open selected media" }
+                    .use { input -> f.outputStream().use { output -> input.copyTo(output) } }
             }
         }
         return try { upload(ctx, tmp, ext) } finally { tmp.delete() }
@@ -233,7 +265,6 @@ object Repo {
         awaitClose { reg.remove() }
     }
 
-    // ---------- tic-tac-toe (not encrypted: only X/O positions) ----------
     private fun gameDoc(pid: String) = db.collection("pairs").document(pid).collection("games").document("current")
 
     fun gameFlow(pairId: String): Flow<GameState?> = callbackFlow {
@@ -261,7 +292,6 @@ object Repo {
         ).await()
     }
 
-    /** Applies a move inside a transaction so both devices can never desync. */
     suspend fun move(ctx: Context, index: Int) {
         val me = uid()
         val ref = gameDoc(pairId(ctx))
@@ -285,9 +315,9 @@ object Repo {
 
     private fun checkWin(b: CharArray): Boolean {
         val lines = listOf(
-            0 to 1 to 2, 3 to 4 to 5, 6 to 7 to 8, // rows
-            0 to 3 to 6, 1 to 4 to 7, 2 to 5 to 8, // cols
-            0 to 4 to 8, 2 to 4 to 6               // diags
+            0 to 1 to 2, 3 to 4 to 5, 6 to 7 to 8,
+            0 to 3 to 6, 1 to 4 to 7, 2 to 5 to 8,
+            0 to 4 to 8, 2 to 4 to 6
         )
         return lines.any { (p, c) -> val (a, bIdx) = p; b[a] != '-' && b[a] == b[bIdx] && b[a] == b[c] }
     }

@@ -9,7 +9,6 @@
         <item name="android:navigationBarColor">#000000</item>
     </style>
 
-    <!-- Transparent window so only the Compose panel is visible over the home screen -->
     <style name="Theme.Overlay" parent="android:Theme.Translucent.NoTitleBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
