@@ -243,10 +243,14 @@ object Repo {
     }
 
     suspend fun upload(ctx: Context, file: File, ext: String): String {
+        require(file.exists() && file.length() > 0) { "Selected media file does not exist or is empty" }
+        uid()
+        val pid = pairId(ctx)
+        require(pid.isNotEmpty()) { "You must be paired before sending media" }
         val encrypted = Crypto.hasKey(ctx)
         val toSend = withContext(Dispatchers.IO) { Crypto.encryptFile(ctx, file) }
         val name = if (encrypted) "$ext.enc" else ext
-        val ref = storage.reference.child("pairs/${pairId(ctx)}/media/${UUID.randomUUID()}.$name")
+        val ref = storage.reference.child("pairs/$pid/media/${UUID.randomUUID()}.$name")
         try {
             ref.putFile(Uri.fromFile(toSend)).await()
             return ref.downloadUrl.await().toString()
