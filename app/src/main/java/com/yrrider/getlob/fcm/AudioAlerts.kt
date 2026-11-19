@@ -2,6 +2,7 @@ package com.yrrider.getlob.fcm
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -21,18 +22,23 @@ object AudioAlerts {
     private var sosRingtone: Ringtone? = null
     private var sosAudioTrack: AudioTrack? = null
     private var sosTimeoutRunnable: Runnable? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var lastAudioManager: AudioManager? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun getVibrator(ctx: Context): Vibrator? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+            vm?.defaultVibrator ?: (ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
 
     fun vibrate(ctx: Context, isSos: Boolean) {
         try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vm?.defaultVibrator ?: (ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
-            } else {
-                @Suppress("DEPRECATION")
-                ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            }
-
+            val vibrator = getVibrator(ctx)
             if (vibrator == null || !vibrator.hasVibrator()) {
                 Log.w(TAG, "No vibrator found on device")
                 return
@@ -80,18 +86,22 @@ object AudioAlerts {
 
     fun vibrateLiveInvite(ctx: Context) {
         try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vm?.defaultVibrator ?: (ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
-            } else {
-                @Suppress("DEPRECATION")
-                ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            } ?: return
-
+            val vibrator = getVibrator(ctx) ?: return
             val pattern = longArrayOf(0, 300, 150, 300, 150, 500)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val effect = VibrationEffect.createWaveform(pattern, -1)
-                vibrator.vibrate(effect)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val attrs = VibrationAttributes.Builder()
+                        .setUsage(VibrationAttributes.USAGE_COMMUNICATION_REQUEST)
+                        .build()
+                    vibrator.vibrate(effect, attrs)
+                } else {
+                    val audioAttrs = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                    vibrator.vibrate(effect, audioAttrs)
+                }
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(pattern, -1)
@@ -102,12 +112,73 @@ object AudioAlerts {
     }
 
     @Synchronized
+    fun startSosVibrationLoop(ctx: Context) {
+        stopSosVibration(ctx)
+        try {
+            val vibrator = getVibrator(ctx) ?: return
+            val pattern = longArrayOf(0, 600, 200, 600, 200, 600, 200, 800)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val amplitudes = if (vibrator.hasAmplitudeControl()) {
+                    intArrayOf(0, 255, 0, 255, 0, 255, 0, 255)
+                } else null
+                val effect = if (amplitudes != null) {
+                    VibrationEffect.createWaveform(pattern, amplitudes, 0)
+                } else {
+                    VibrationEffect.createWaveform(pattern, 0)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val vibAttrs = VibrationAttributes.Builder()
+                        .setUsage(VibrationAttributes.USAGE_ALARM)
+                        .build()
+                    vibrator.vibrate(effect, vibAttrs)
+                } else {
+                    val audioAttrs = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                    vibrator.vibrate(effect, audioAttrs)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(pattern, 0)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "SOS vibration loop failed", e)
+        }
+    }
+
+    @Synchronized
+    fun stopSosVibration(ctx: Context) {
+        try {
+            val vibrator = getVibrator(ctx)
+            vibrator?.cancel()
+        } catch (e: Throwable) {
+            Log.e(TAG, "Cancel vibration failed", e)
+        }
+    }
+
+    @Synchronized
     fun playSosSound(ctx: Context) {
         stopSosSound()
         try {
             val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            val mediaVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
-            val useMedia = mediaVol > 0
+            lastAudioManager = audioManager
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    .build()
+                audioFocusRequest = focusRequest
+                audioManager?.requestAudioFocus(focusRequest)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+            }
 
             val sampleRate = 44100
             val durationPerTone = 0.32
@@ -128,7 +199,7 @@ object AudioAlerts {
 
             val bufferSize = totalSamples * 2
             val audioAttrs = AudioAttributes.Builder()
-                .setUsage(if (useMedia) AudioAttributes.USAGE_MEDIA else AudioAttributes.USAGE_ALARM)
+                .setUsage(AudioAttributes.USAGE_ALARM)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
 
@@ -153,7 +224,7 @@ object AudioAlerts {
             sosTimeoutRunnable = Runnable { stopSosSound() }.also {
                 mainHandler.postDelayed(it, 45_000)
             }
-            Log.i(TAG, "Playing dedicated SOS siren (useMediaStream=$useMedia)")
+            Log.i(TAG, "Playing dedicated SOS siren on USAGE_ALARM")
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to play synthesized SOS siren, falling back to Ringtone", e)
             try {
@@ -195,6 +266,19 @@ object AudioAlerts {
             Log.e(TAG, "Failed to stop SOS ringtone", e)
         } finally {
             sosRingtone = null
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { lastAudioManager?.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                lastAudioManager?.abandonAudioFocus(null)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to abandon audio focus", e)
+        } finally {
+            audioFocusRequest = null
+            lastAudioManager = null
         }
     }
 }

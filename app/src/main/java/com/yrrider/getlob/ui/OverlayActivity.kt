@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.GifDecoder
@@ -73,6 +76,7 @@ import com.yrrider.getlob.widget.WidgetThemes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.io.FileOutputStream
 
@@ -90,6 +94,18 @@ class OverlayActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A translucent theme is not enough on every launcher / Android version: explicitly
+        // keep the activity surface transparent and prevent WindowManager dim-behind defaults.
+        window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+        window.setFormat(PixelFormat.TRANSLUCENT)
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        window.attributes = window.attributes.apply { dimAmount = 0f }
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         val sos = intent.getBooleanExtra(EXTRA_SOS, false)
         if (sos) {
             setShowWhenLocked(true)
@@ -110,6 +126,7 @@ class OverlayActivity : ComponentActivity() {
             ) {
                 OverlayRoot(url, kind, sos, widgetBounds) {
                     AudioAlerts.stopSosSound()
+                    com.yrrider.getlob.fcm.SosAlertService.stop(this@OverlayActivity)
                     finish()
                 }
             }
@@ -119,6 +136,7 @@ class OverlayActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         AudioAlerts.stopSosSound()
+        com.yrrider.getlob.fcm.SosAlertService.stop(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -179,7 +197,7 @@ private fun OverlayRoot(
         scope.launch {
             busy = true
             try {
-                block()
+                withTimeout(60_000) { block() }
                 if (quit) close()
             } catch (e: Exception) {
                 toast("Failed: ${e.message}")
@@ -261,7 +279,7 @@ private fun OverlayRoot(
     val widgetTheme = remember { WidgetThemes.theme(ctx) }
     val baseColorLong = if (widgetSettings.bgColor != 0L) widgetSettings.bgColor else widgetTheme.bg
     val baseColor = Color(baseColorLong)
-    val bgAlpha = widgetSettings.bgTransparency.coerceIn(0.15f, 1f)
+    val bgAlpha = widgetSettings.bgTransparency.coerceIn(0.05f, 1f)
     val cornerShape = RoundedCornerShape(widgetSettings.cornerDp.coerceIn(12, 32).dp)
     val borderWidth = widgetSettings.borderWidthDp.coerceIn(0.5f, 4f).dp
     val borderColor = if (widgetSettings.borderColor != 0L) {
@@ -666,6 +684,7 @@ private fun OverlayRoot(
                                 Button(
                                     onClick = {
                                         AudioAlerts.stopSosSound()
+                                        com.yrrider.getlob.fcm.SosAlertService.stop(ctx)
                                         close()
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.99f)),

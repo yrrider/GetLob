@@ -3,6 +3,10 @@ package com.yrrider.getlob.widget
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.util.Log
 import android.widget.RemoteViews
 import androidx.compose.runtime.Composable
@@ -108,8 +112,8 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
         } else null
     }
 
-    val flipper: RemoteViews? = remember(tick, s.updatedAt, rawW, rawH, s.kind) {
-        if (animated && s.kind != MsgType.SOS) buildFlipper(ctx, s, rawW, rawH) else null
+    val flipper: RemoteViews? = remember(tick, s.updatedAt, rawW, rawH, s.kind, s.fitCrop, settings) {
+        if (animated && s.kind != MsgType.SOS) buildFlipper(ctx, s, rawW, rawH, settings) else null
     }
 
     Box(
@@ -152,18 +156,31 @@ private fun WidgetContent(s: WidgetState, settings: WidgetSettings, theme: Widge
     }
 }
 
-private fun buildFlipper(ctx: Context, s: WidgetState, wPx: Int, hPx: Int): RemoteViews? {
-    val fw = 180
-    val fh = 180
+private fun buildFlipper(ctx: Context, s: WidgetState, wPx: Int, hPx: Int, settings: WidgetSettings): RemoteViews? {
+    val fw = minOf(wPx, 480)
+    val fh = minOf(hPx, 480)
     val root = RemoteViews(ctx.packageName, R.layout.widget_flipper)
     var added = 0
     val maxFrames = minOf(3, s.frameCount)
+    val density = ctx.resources.displayMetrics.density
+    val cornerPx = (settings.cornerDp * density).coerceIn(4f, minOf(fw, fh) / 2f)
+
     for (i in 0 until maxFrames) {
         val f = LocalStore.frameFile(ctx, i)
         if (!f.exists()) continue
-        val scaled = ImageFit.decode(f.absolutePath, fw, fh, crop = true) ?: continue
+        val scaled = ImageFit.decode(f.absolutePath, fw, fh, crop = s.fitCrop) ?: continue
+
+        val rounded = Bitmap.createBitmap(scaled.width, scaled.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(rounded)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        val rect = RectF(0f, 0f, scaled.width.toFloat(), scaled.height.toFloat())
+        val path = Path().apply { addRoundRect(rect, cornerPx, cornerPx, Path.Direction.CW) }
+        canvas.clipPath(path)
+        canvas.drawBitmap(scaled, 0f, 0f, paint)
+        if (scaled !== rounded) scaled.recycle()
+
         val rv = RemoteViews(ctx.packageName, R.layout.widget_frame)
-        rv.setImageViewBitmap(R.id.frame, scaled)
+        rv.setImageViewBitmap(R.id.frame, rounded)
         root.addView(R.id.flipper, rv)
         added++
     }

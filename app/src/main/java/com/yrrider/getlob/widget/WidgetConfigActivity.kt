@@ -91,26 +91,22 @@ class WidgetConfigActivity : ComponentActivity() {
             ) {
                 Surface(Modifier.fillMaxSize(), color = Color(0xFF000000)) {
                     ConfigScreen { finalSettings ->
-
-                        LocalStore.writeSettings(this, finalSettings)
-
+                        val appCtx = applicationContext
+                        LocalStore.writeSettings(appCtx, finalSettings)
 
                         val resultValue = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
                         setResult(Activity.RESULT_OK, resultValue)
-                        finish()
-
 
                         CoroutineScope(Dispatchers.IO).launch {
-
                             runCatching {
                                 if (widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
-                                    val id = GlanceAppWidgetManager(applicationContext).getGlanceIdBy(widgetId)
-                                    PairWidget().update(applicationContext, id)
+                                    val id = GlanceAppWidgetManager(appCtx).getGlanceIdBy(widgetId)
+                                    PairWidget().update(appCtx, id)
                                 }
                             }
-                            runCatching { PairWidget().updateAll(applicationContext) }
-                            runCatching { Repo.saveSettings(applicationContext, finalSettings) }
-                        }
+                            runCatching { MediaProcessor.refresh(appCtx) }
+                            runCatching { Repo.saveSettings(appCtx, finalSettings) }
+                        }.invokeOnCompletion { finish() }
                     }
                 }
             }

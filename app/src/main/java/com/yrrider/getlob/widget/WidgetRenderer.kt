@@ -22,7 +22,7 @@ import com.yrrider.getlob.data.WidgetState
 
 object WidgetRenderer {
     private const val TAG = "WidgetRenderer"
-    private const val MAX_DIM = 280
+    private const val MAX_PIXELS = 190_000
     private var cachedCursiveTypeface: Typeface? = null
     private var cachedCalligraphyTypeface: Typeface? = null
 
@@ -61,14 +61,16 @@ object WidgetRenderer {
         settings: WidgetSettings,
         theme: WidgetTheme
     ): Bitmap {
-        val maxSide = maxOf(rawW.coerceAtLeast(80), rawH.coerceAtLeast(80))
-        val scale = if (maxSide > MAX_DIM) MAX_DIM.toFloat() / maxSide else 1f
-        val wPx = (rawW * scale).toInt().coerceAtLeast(80)
-        val hPx = (rawH * scale).toInt().coerceAtLeast(80)
+        val safeRawW = rawW.coerceAtLeast(80)
+        val safeRawH = rawH.coerceAtLeast(80)
+        val px = safeRawW.toLong() * safeRawH
+        val scale = if (px > MAX_PIXELS) Math.sqrt(MAX_PIXELS.toDouble() / px).toFloat() else 1f
+        val wPx = (safeRawW * scale).toInt().coerceAtLeast(80)
+        val hPx = (safeRawH * scale).toInt().coerceAtLeast(80)
 
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        val density = ctx.resources.displayMetrics.density * (wPx.toFloat() / rawW.coerceAtLeast(1))
+        val density = ctx.resources.displayMetrics.density * (wPx.toFloat() / safeRawW)
         val cornerPx = (settings.cornerDp * density).coerceIn(4f, minOf(wPx, hPx) / 2f)
         val strokeWidthPx = (settings.borderWidthDp * density).coerceAtLeast(1f)
         val inset = strokeWidthPx / 2f
@@ -107,7 +109,22 @@ object WidgetRenderer {
                         addRoundRect(rect, cornerPx, cornerPx, Path.Direction.CW)
                     }
                     canvas.clipPath(clipPath)
-                    val photoRect = RectF(0f, 0f, wPx.toFloat(), hPx.toFloat())
+
+                    val photoRect = if (s.fitCrop) {
+                        RectF(0f, 0f, wPx.toFloat(), hPx.toFloat())
+                    } else {
+                        val srcRatio = photo.width.toFloat() / photo.height.toFloat()
+                        val dstRatio = wPx.toFloat() / hPx.toFloat()
+                        val (drawW, drawH) = if (srcRatio > dstRatio) {
+                            wPx.toFloat() to (wPx.toFloat() / srcRatio)
+                        } else {
+                            (hPx.toFloat() * srcRatio) to hPx.toFloat()
+                        }
+                        val dx = (wPx - drawW) / 2f
+                        val dy = (hPx - drawH) / 2f
+                        RectF(dx, dy, dx + drawW, dy + drawH)
+                    }
+
                     canvas.drawBitmap(photo, null, photoRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
                     canvas.restore()
                     drewPhoto = true
@@ -218,7 +235,7 @@ object WidgetRenderer {
                     this.typeface = typeface
                     textSize = (18 * density).coerceIn(13f * density, minDim * 0.16f)
                     textAlign = Paint.Align.CENTER
-                    setShadowLayer(3 * density, 0f, 1f * density, 0x77000000)
+                    setShadowLayer(3 * density, 0f, 1f * density, 0x77000000.toInt())
                 }
                 canvas.drawText(moodLabel, wPx / 2f, hPx * 0.76f, moodPaint)
             }
@@ -228,7 +245,7 @@ object WidgetRenderer {
                 color = fontColor
                 this.typeface = typeface
                 textSize = (20 * density).coerceIn(14f * density, minDim * 0.17f)
-                setShadowLayer(4 * density, 0f, 1.5f * density, 0x88000000)
+                setShadowLayer(4 * density, 0f, 1.5f * density, 0x88000000.toInt())
             }
 
             @Suppress("DEPRECATION")
@@ -257,7 +274,7 @@ object WidgetRenderer {
                 this.typeface = typeface
                 textSize = 22 * density
                 textAlign = Paint.Align.CENTER
-                setShadowLayer(3 * density, 0f, 1f * density, 0x66000000)
+                setShadowLayer(3 * density, 0f, 1f * density, 0x66000000.toInt())
             }
             canvas.drawText("GetLob ❤️", wPx / 2f, hPx * 0.46f, titlePaint)
 

@@ -136,9 +136,9 @@ private fun LiveScreen(sendAlert: Boolean, close: () -> Unit) {
         val room = roomInstance ?: return@LaunchedEffect
         if (!hasMic()) micPerm.launch(Manifest.permission.RECORD_AUDIO)
         try {
-            val res = FirebaseFunctions.getInstance().getHttpsCallable("getLiveToken").call().await().data as? Map<*, *>
-            val url = (res?.get("url") as? String)?.trim() ?: ""
-            val token = (res?.get("token") as? String)?.trim() ?: ""
+            val liveCredentials = LiveTokenCache.fetchOrGet(ctx)
+            val url = liveCredentials?.first ?: ""
+            val token = liveCredentials?.second ?: ""
 
             if (!roomIsActive.get() || room !== roomInstance) return@LaunchedEffect
 

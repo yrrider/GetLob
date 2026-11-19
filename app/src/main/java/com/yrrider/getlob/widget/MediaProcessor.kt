@@ -1,9 +1,6 @@
 package com.yrrider.getlob.widget
 
-import android.appwidget.AppWidgetManager
-import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Movie
@@ -12,13 +9,14 @@ import android.util.Log
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
-import androidx.glance.appwidget.updateAll
 import com.yrrider.getlob.data.LocalStore
 import com.yrrider.getlob.data.Message
 import com.yrrider.getlob.data.MsgType
 import com.yrrider.getlob.data.SecureMedia
 import com.yrrider.getlob.data.WidgetState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -28,82 +26,96 @@ object MediaProcessor {
     private const val FRAME_PX = 240
     private const val POSTER_PX = 480
 
+    private val applyMutex = Mutex()
+
     suspend fun apply(ctx: Context, m: Message, localFile: File? = null) = withContext(Dispatchers.IO) {
-        Log.d("MediaProcessor", "apply message type=${m.type}, text=${m.text}, localFile=${localFile?.name}")
-        val old = LocalStore.read(ctx)
-        val next: WidgetState? = when (m.type) {
-            MsgType.TEXT, MsgType.EMOJI -> {
-                clear(ctx)
-                WidgetState(kind = m.type, text = m.text, posterPath = "", frameCount = 0)
+        applyMutex.withLock {
+            if (m.id.isNotEmpty() && m.id == LocalStore.lastWidgetMsgId(ctx) && localFile == null) {
+                Log.d("MediaProcessor", "Skipping already applied widget message: ${m.id}")
+                return@withContext
             }
 
-            MsgType.IMAGE -> {
-                val f = localFile?.takeIf { it.exists() && it.length() > 0 }
-                    ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
-                if (f != null && f.exists() && f.length() > 0) {
+            Log.d("MediaProcessor", "apply message type=${m.type}, text=${m.text}, localFile=${localFile?.name}")
+            val old = LocalStore.read(ctx)
+            val next: WidgetState? = when (m.type) {
+                MsgType.TEXT, MsgType.EMOJI -> {
                     clear(ctx)
-                    writePoster(ctx, f.absolutePath)
-                    WidgetState(
-                        kind = MsgType.IMAGE,
-                        text = m.text,
-                        posterPath = LocalStore.posterFile(ctx).absolutePath,
-                        mediaUrl = m.mediaUrl
-                    )
-                } else {
-                    Log.e("MediaProcessor", "Failed to get image file for mediaUrl: ${m.mediaUrl}")
-                    if (m.text.isNotBlank()) {
-                        WidgetState(kind = MsgType.TEXT, text = m.text)
+                    WidgetState(kind = m.type, text = m.text, posterPath = "", frameCount = 0)
+                }
+
+                MsgType.IMAGE -> {
+                    val f = localFile?.takeIf { it.exists() && it.length() > 0 }
+                        ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                    if (f != null && f.exists() && f.length() > 0) {
+                        clear(ctx)
+                        writePoster(ctx, f.absolutePath)
+                        WidgetState(
+                            kind = MsgType.IMAGE,
+                            text = m.text,
+                            posterPath = LocalStore.posterFile(ctx).absolutePath,
+                            mediaUrl = m.mediaUrl
+                        )
+                    } else {
+                        Log.e("MediaProcessor", "Failed to get image file for mediaUrl: ${m.mediaUrl}")
+                        if (m.text.isNotBlank()) {
+                            WidgetState(kind = MsgType.TEXT, text = m.text)
+                        } else null
+                    }
+                }
+
+                MsgType.GIF -> {
+                    val f = localFile?.takeIf { it.exists() && it.length() > 0 }
+                        ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                    if (f != null && f.exists() && f.length() > 0) {
+                        clear(ctx)
+                        val n = extractGifFrames(ctx, f)
+                        WidgetState(
+                            kind = MsgType.GIF,
+                            text = m.text,
+                            posterPath = LocalStore.frameFile(ctx, 0).absolutePath,
+                            frameCount = n,
+                            mediaUrl = m.mediaUrl
+                        )
                     } else null
                 }
-            }
 
-            MsgType.GIF -> {
-                val f = localFile?.takeIf { it.exists() && it.length() > 0 }
-                    ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
-                if (f != null && f.exists() && f.length() > 0) {
+                MsgType.VIDEO -> {
+                    val f = localFile?.takeIf { it.exists() && it.length() > 0 }
+                        ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
+                    if (f != null && f.exists() && f.length() > 0) {
+                        clear(ctx)
+                        val n = extractVideoFrames(ctx, f)
+                        WidgetState(
+                            kind = MsgType.VIDEO,
+                            text = m.text,
+                            posterPath = LocalStore.posterFile(ctx).absolutePath,
+                            frameCount = n,
+                            mediaUrl = m.mediaUrl
+                        )
+                    } else null
+                }
+
+                MsgType.SOS -> {
                     clear(ctx)
-                    val n = extractGifFrames(ctx, f)
-                    WidgetState(
-                        kind = MsgType.GIF,
-                        text = m.text,
-                        posterPath = LocalStore.frameFile(ctx, 0).absolutePath,
-                        frameCount = n,
-                        mediaUrl = m.mediaUrl
-                    )
-                } else null
-            }
+                    WidgetState(kind = MsgType.SOS, text = "🚨 SOS ALERT")
+                }
 
-            MsgType.VIDEO -> {
-                val f = localFile?.takeIf { it.exists() && it.length() > 0 }
-                    ?: runCatching { SecureMedia.fetch(ctx, m.mediaUrl) }.getOrNull()
-                if (f != null && f.exists() && f.length() > 0) {
+                MsgType.VIBE -> {
                     clear(ctx)
-                    val n = extractVideoFrames(ctx, f)
-                    WidgetState(
-                        kind = MsgType.VIDEO,
-                        text = m.text,
-                        posterPath = LocalStore.posterFile(ctx).absolutePath,
-                        frameCount = n,
-                        mediaUrl = m.mediaUrl
-                    )
-                } else null
+                    WidgetState(kind = MsgType.EMOJI, text = "💓")
+                }
+
+                MsgType.GAME -> old.copy(kind = MsgType.GAME, text = m.text.ifEmpty { "🎮 Your turn!" })
+                else -> null
             }
 
-            MsgType.SOS -> {
-                clear(ctx)
-                WidgetState(kind = MsgType.SOS, text = "🚨 SOS ALERT")
+            if (next != null) {
+                LocalStore.write(ctx, next.copy(fitCrop = old.fitCrop, updatedAt = System.currentTimeMillis()))
+                if (m.id.isNotEmpty()) {
+                    LocalStore.setLastWidgetMsgId(ctx, m.id)
+                }
+                refresh(ctx)
             }
-
-            MsgType.VIBE -> {
-                clear(ctx)
-                WidgetState(kind = MsgType.EMOJI, text = "💓")
-            }
-            MsgType.GAME -> old.copy(kind = MsgType.GAME, text = m.text.ifEmpty { "🎮 Your turn!" })
-            else -> null
-        }
-        if (next != null) {
-            LocalStore.write(ctx, next.copy(fitCrop = old.fitCrop, updatedAt = System.currentTimeMillis()))
-            refresh(ctx)
         }
     }
 
@@ -121,23 +133,12 @@ object MediaProcessor {
         }.onFailure { e ->
             Log.e("MediaProcessor", "Error updating Glance widgets: ${e.message}", e)
         }
-        runCatching { PairWidget().updateAll(ctx) }
-        runCatching {
-            val mgr = AppWidgetManager.getInstance(ctx)
-            val ids = mgr.getAppWidgetIds(ComponentName(ctx, PairWidgetReceiver::class.java))
-            if (ids.isNotEmpty()) {
-                val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE).apply {
-                    component = ComponentName(ctx, PairWidgetReceiver::class.java)
-                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
-                }
-                ctx.sendBroadcast(intent)
-            }
-        }
     }
 
     suspend fun clearCanvas(ctx: Context) = withContext(Dispatchers.IO) {
         clear(ctx)
         LocalStore.write(ctx, WidgetState(updatedAt = System.currentTimeMillis()))
+        LocalStore.setLastWidgetMsgId(ctx, "")
         refresh(ctx)
     }
 
@@ -147,9 +148,12 @@ object MediaProcessor {
     }
 
     private fun writePoster(ctx: Context, srcPath: String) {
-
         val bmp = ImageFit.decode(srcPath, POSTER_PX, POSTER_PX, crop = false) ?: return
-        save(bmp, LocalStore.posterFile(ctx), 85)
+        try {
+            save(bmp, LocalStore.posterFile(ctx), 85)
+        } finally {
+            bmp.recycle()
+        }
     }
 
     private fun save(bmp: Bitmap, f: File, q: Int) {
@@ -181,13 +185,25 @@ object MediaProcessor {
         val r = MediaMetadataRetriever()
         try {
             r.setDataSource(video.absolutePath)
-            val poster = r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, POSTER_PX, POSTER_PX)
-            if (poster != null) save(poster, LocalStore.posterFile(ctx), 85)
+            val durStr = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            val durationMs = durStr?.toLongOrNull() ?: 1000L
+
+            val poster = r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST, POSTER_PX, POSTER_PX)
+                ?: r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, POSTER_PX, POSTER_PX)
+            if (poster != null) {
+                save(poster, LocalStore.posterFile(ctx), 85)
+                poster.recycle()
+            }
+
             var count = 0
-            for (i in 0 until MAX_FRAMES) {
-                val t = i * 300_000L
-                val f = r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, FRAME_PX, FRAME_PX) ?: break
+            val fractions = doubleArrayOf(0.0, 0.33, 0.66)
+            for (frac in fractions) {
+                val timeUs = (durationMs * frac * 1000).toLong()
+                val f = r.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, FRAME_PX, FRAME_PX)
+                    ?: r.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, FRAME_PX, FRAME_PX)
+                    ?: break
                 save(f, LocalStore.frameFile(ctx, count), 80)
+                f.recycle()
                 count++
             }
             return count

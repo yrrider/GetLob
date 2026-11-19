@@ -38,7 +38,6 @@ data class WidgetSettings(
     val fitCrop: Boolean = true,
 ) {
     fun toMap(): Map<String, Any> = mapOf(
-        "partnerName" to partnerName,
         "fontStyle" to fontStyle,
         "fontColor" to fontColor,
         "bgTransparency" to bgTransparency.toDouble(),
@@ -53,10 +52,10 @@ data class WidgetSettings(
     )
 
     companion object {
-        fun fromMap(m: Map<String, Any?>?): WidgetSettings {
-            if (m == null) return WidgetSettings()
+        fun fromMap(m: Map<String, Any?>?, defaultPartnerName: String = "Partner"): WidgetSettings {
+            if (m == null) return WidgetSettings(partnerName = defaultPartnerName)
             return WidgetSettings(
-                partnerName = (m["partnerName"] as? String)?.takeIf { it.isNotBlank() } ?: "Partner",
+                partnerName = defaultPartnerName,
                 fontStyle = (m["fontStyle"] as? String) ?: "Calligraphy",
                 fontColor = (m["fontColor"] as? Number)?.toLong() ?: 0xFFFFFFFFL,
                 bgTransparency = (m["bgTransparency"] as? Number)?.toFloat() ?: 0.35f,
@@ -108,11 +107,11 @@ object LocalStore {
             .putString("mediaUrl", s.mediaUrl)
             .putBoolean("fitCrop", s.fitCrop)
             .putLong("updatedAt", System.currentTimeMillis())
-            .commit()
+            .apply()
     }
 
     fun setFitCrop(c: Context, crop: Boolean) {
-        prefs(c).edit().putBoolean("fitCrop", crop).putLong("updatedAt", System.currentTimeMillis()).commit()
+        prefs(c).edit().putBoolean("fitCrop", crop).putLong("updatedAt", System.currentTimeMillis()).apply()
         val s = readSettings(c)
         writeSettings(c, s.copy(fitCrop = crop))
     }
@@ -154,7 +153,7 @@ object LocalStore {
             .putInt("themeIndex", s.themeIndex)
             .putInt("cornerDp", s.cornerDp)
             .putBoolean("fitCrop", s.fitCrop)
-            .commit()
+            .apply()
 
         c.getSharedPreferences("widget_style", Context.MODE_PRIVATE).edit()
             .putInt("theme", s.themeIndex)
@@ -265,7 +264,40 @@ object LocalStore {
     }
 
     fun pairId(c: Context): String = prefs(c).getString("pairId", "") ?: ""
+    fun savePairId(c: Context, id: String) {
+        prefs(c).edit().putString("pairId", id).apply()
+    }
     fun pairCode(c: Context): String = prefs(c).getString("pairCode", "") ?: ""
+    fun savePairCode(c: Context, code: String) {
+        prefs(c).edit().putString("pairCode", code).apply()
+    }
+
+    fun pendingFcmToken(c: Context): String = prefs(c).getString("pending_fcm_token", "") ?: ""
+    fun setPendingFcmToken(c: Context, token: String) {
+        prefs(c).edit().putString("pending_fcm_token", token).apply()
+    }
+
+    fun isTokenSynced(c: Context): Boolean = prefs(c).getBoolean("token_synced", false)
+    fun setTokenSynced(c: Context, synced: Boolean) {
+        prefs(c).edit().putBoolean("token_synced", synced).apply()
+    }
+
+    fun myUid(c: Context): String = prefs(c).getString("my_uid", "") ?: ""
+    fun setMyUid(c: Context, uid: String) {
+        prefs(c).edit().putString("my_uid", uid).apply()
+    }
+
+    fun lastWidgetMsgId(c: Context): String = prefs(c).getString("last_widget_msg_id", "") ?: ""
+    fun setLastWidgetMsgId(c: Context, id: String) {
+        prefs(c).edit().putString("last_widget_msg_id", id).apply()
+    }
+
+    fun lastCachePurgeAt(c: Context): Long = prefs(c).getLong("last_cache_purge_at", 0L)
+    fun setLastCachePurgeAt(c: Context, timestamp: Long) {
+        prefs(c).edit().putLong("last_cache_purge_at", timestamp).apply()
+    }
+
+    fun partnerAvatarFile(c: Context): File = File(c.filesDir, "partner_avatar.jpg")
 
     var Context.pairId: String
         get() = pairId(this)
@@ -280,7 +312,7 @@ object LocalStore {
         var uuid = p.getString("app_uuid", null)
         if (uuid.isNullOrBlank()) {
             uuid = java.util.UUID.randomUUID().toString()
-            p.edit().putString("app_uuid", uuid).commit()
+            p.edit().putString("app_uuid", uuid).apply()
         }
         return uuid
     }
